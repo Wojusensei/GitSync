@@ -1,0 +1,69 @@
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;color:#c8d6e5;min-height:100vh;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,0.5)}
+
+/* 应用布局 */
+.app{position:relative;z-index:1;display:grid;grid-template-columns:280px 1fr;grid-template-rows:56px 1fr;height:100vh;gap:0}
+
+/* 顶部栏 - 超薄玻璃背景 */
+.topbar{grid-column:1/-1;background:rgba(8,16,28,0.25);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border-bottom:1px solid rgba(255,255,255,0.08);box-shadow:0 1px 0 rgba(255,255,255,0.04);display:flex;align-items:center;padding:0 20px;gap:16px;z-index:10}
+.topbar h1{font-size:15px;font-weight:600;color:#ffffff;letter-spacing:0.5px;display:flex;align-items:center;gap:10px;text-shadow:0 1px 3px rgba(0,0,0,0.6)}
+.topbar .path-input{flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:7px 14px;color:#ffffff;font-size:13px;outline:none;transition:all 0.3s;backdrop-filter:blur(8px)}
+.topbar .path-input:focus{border-color:rgba(91,155,213,0.6);background:rgba(255,255,255,0.12);box-shadow:0 0 15px rgba(91,155,213,0.15)}
+.topbar .path-input::placeholder{color:rgba(255,255,255,0.4)}
+.topbar button{background:rgba(91,155,213,0.25);border:1px solid rgba(91,155,213,0.4);color:#ffffff;padding:7px 20px;border-radius:10px;font-size:13px;cursor:pointer;transition:all 0.3s;font-weight:600;backdrop-filter:blur(10px);position:relative;overflow:hidden}
+.topbar button:hover{background:rgba(91,155,213,0.35);box-shadow:0 0 20px rgba(91,155,213,0.25)}
+.topbar button:active{transform:scale(0.96)}
+
+/* 侧边栏 - 超薄玻璃背景 */
+.sidebar{background:rgba(8,16,28,0.2);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border-right:1px solid rgba(255,255,255,0.08);box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);padding:20px 14px;overflow-y:auto;z-index:5;transition:transform 0.1s ease-out}
+.section-title{font-size:10px;text-transform:uppercase;color:rgba(255,255,255,0.4);letter-spacing:1.5px;margin-bottom:12px;padding:0 6px}
+.branch-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;font-size:13px;cursor:pointer;transition:all 0.3s;color:rgba(255,255,255,0.65);margin-bottom:3px;position:relative;overflow:hidden;backdrop-filter:blur(8px);background:rgba(255,255,255,0.04)}
+.branch-item::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at var(--mouse-x,50%) var(--mouse-y,50%),rgba(255,255,255,0.1) 0%,transparent 70%);opacity:0;transition:opacity 0.3s}
+.branch-item:hover::before{opacity:1}
+.branch-item:hover{background:rgba(255,255,255,0.08);color:#ffffff;transform:translateX(2px)}
+.branch-item.active{background:rgba(91,155,213,0.25);color:#ffffff;border:1px solid rgba(91,155,213,0.3)}
+.branch-dot{width:8px;height:8px;border-radius:50%}
+.separator{height:1px;background:rgba(255,255,255,0.06);margin:16px 0}
+
+/* 主内容区 - 超薄玻璃背景 */
+.main{background:rgba(5,10,18,0.15);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);border:1px solid rgba(255,255,255,0.06);border-radius:16px 0 0 0;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);overflow-y:auto;padding:24px;z-index:5;scroll-behavior:smooth;position:relative}
+.commit-list{position:relative;z-index:1;display:flex;flex-direction:column;gap:2px}
+.commit-item{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:16px 22px;cursor:pointer;position:relative;overflow:hidden;backdrop-filter:blur(12px);will-change:transform;transition:background 0.2s, box-shadow 0.2s, transform 0.2s}
+.commit-item::after{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.02),transparent);transition:left 0.6s}
+.commit-item:hover::after{left:100%}
+.commit-item:hover{background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.12);box-shadow:0 8px 30px rgba(0,0,0,0.4);transform:scale(1.02)}
+.commit-item.selected{background:rgba(91,155,213,0.15);border-color:rgba(91,155,213,0.4);box-shadow:0 0 25px rgba(91,155,213,0.1)}
+.commit-header{display:flex;align-items:center;gap:14px;margin-bottom:8px;pointer-events:none}
+.hash{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:11px;color:#ffffff;background:rgba(91,155,213,0.25);padding:3px 10px;border-radius:6px;letter-spacing:0.5px;text-shadow:0 1px 2px rgba(0,0,0,0.4)}
+.author{font-size:13px;color:#ffffff;font-weight:500;text-shadow:0 1px 2px rgba(0,0,0,0.4)}
+.time{font-size:11px;color:rgba(255,255,255,0.5);margin-left:auto}
+.message{font-size:13px;color:rgba(255,255,255,0.8);line-height:1.6;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,0.4)}
+
+/* 动态鼠标光斑 - 全局跟踪 */
+.pointer-glow{position:fixed;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(91,155,213,0.15),transparent);pointer-events:none;z-index:0;transform:translate(-50%,-50%);transition:left 0.1s ease-out, top 0.1s ease-out}
+
+/* 手电筒效果保留在卡片上 */
+.torch-glow{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;border-radius:14px;background:radial-gradient(circle 100px at var(--torch-x, 50%) var(--torch-y, 50%), rgba(91,155,213,0.08), transparent);opacity:0;transition:opacity 0.2s}
+.commit-item:hover .torch-glow{opacity:1}
+
+/* 涟漪 */
+.ripple{position:absolute;border-radius:50%;background:rgba(91,155,213,0.4);transform:scale(0);animation:ripple 0.6s ease-out;pointer-events:none}
+@keyframes ripple{to{transform:scale(4);opacity:0}}
+
+/* 状态栏 */
+.status-bar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(255,255,255,0.05);border-radius:10px;margin-bottom:16px;font-size:12px;color:rgba(255,255,255,0.5);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.06)}
+.status-dot{width:6px;height:6px;border-radius:50%;background:#5B9BD5;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* 空状态 */
+.empty-state{text-align:center;padding:40px 20px;color:rgba(255,255,255,0.3)}
+.empty-state svg{opacity:0.4;margin-bottom:12px}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.2)}
+
+/* 错误提示 */
+.error{background:rgba(255,77,77,0.1);border:1px solid rgba(255,77,77,0.2);color:#ff6b6b;padding:12px 18px;border-radius:12px;font-size:13px;margin-bottom:16px;backdrop-filter:blur(10px)}
