@@ -4,6 +4,12 @@ import { motion, AnimatePresence, useMotionValue, useSpring, Reorder } from 'fra
 import { SiGit } from 'react-icons/si';
 import { VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory } from 'react-icons/vsc';
 import './App.css';
+import SemanticSearch from './components/SemanticSearch';
+import DiffViewer from './components/DiffViewer';
+import ExportReport from './components/ExportReport';
+import ChangelogGenerator from './components/ChangelogGenerator';
+import EnhancedRebase from './components/EnhancedRebase';
+import CommandPalette from './components/CommandPalette';
 
 interface Commit {
   hash: string;
@@ -139,6 +145,11 @@ function App() {
   const [stashList, setStashList] = useState<StashEntry[]>([]);
   const [rebaseCommits, setRebaseCommits] = useState<RebaseCommit[]>([]);
   const [rebaseOps, setRebaseOps] = useState<RebaseOperation[]>([]);
+  const [showSemanticSearch, setShowSemanticSearch] = useState(false);
+  const [showDiffViewer, setShowDiffViewer] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
+  const [showEnhancedRebase, setShowEnhancedRebase] = useState(false);
 
   useEffect(() => {
     setOrder(commits.map((_, i) => i));
@@ -361,6 +372,17 @@ function App() {
       }} />
 
       <motion.div className="pointer-glow" style={{ left: springX, top: springY, position: 'fixed' }} />
+      <CommandPalette commands={[
+  { id: 'health', label: '仓库健康报告', action: () => { setShowHealth(true); loadHealthReport(); } },
+  { id: 'contributors', label: '贡献者统计', action: () => { setShowContributors(true); loadContributors(); } },
+  { id: 'hotfiles', label: '热点文件', action: () => { setShowHotFiles(true); loadHotFiles(); } },
+  { id: 'stash', label: 'Stash 管理', action: () => { setShowStash(true); loadStashList(); } },
+  { id: 'rebase', label: '交互 Rebase', action: () => { setShowRebase(true); loadRebaseCommits(); } },
+  { id: 'search', label: '语义搜索', action: () => setShowSemanticSearch(true) },
+  { id: 'diff', label: '差异对比', action: () => setShowDiffViewer(true) },
+  { id: 'export', label: '导出报告', action: () => setShowExport(true) },
+  { id: 'changelog', label: '生成变更日志', action: () => setShowChangelog(true) },
+]} />
 
       <div className="app">
         <header className="topbar">
@@ -406,9 +428,19 @@ function App() {
           <div className="branch-item" onClick={loadHotFiles}>热点文件</div>
           <div className="branch-item" onClick={loadStashList}>Stash 管理</div>
           <div className="branch-item" onClick={loadRebaseCommits}>交互 Rebase</div>
+          <div className="branch-item" onClick={() => setShowSemanticSearch(!showSemanticSearch)}>语义搜索</div>
+          <div className="branch-item" onClick={() => setShowDiffViewer(!showDiffViewer)}>差异对比</div>
+          <div className="branch-item" onClick={() => setShowExport(!showExport)}>导出报告</div>
+          <div className="branch-item" onClick={() => setShowChangelog(!showChangelog)}>变更日志</div>
+          <div className="branch-item" onClick={() => setShowEnhancedRebase(!showEnhancedRebase)}>Rebase 增强</div>
         </aside>
 
         <main className="main" ref={mainRef}>
+          {showSemanticSearch && <SemanticSearch repoPath={repoPath} />}
+          {showDiffViewer && <DiffViewer repoPath={repoPath} />}
+          {showExport && <ExportReport healthReport={healthReport} contributors={contributors} hotFiles={hotFiles} />}
+          {showChangelog && <ChangelogGenerator repoPath={repoPath} />}
+          {showEnhancedRebase && <EnhancedRebase repoPath={repoPath} onComplete={() => { setShowEnhancedRebase(false); loadRepo(); }} />}
           {error && (<motion.div className="error" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>{error}</motion.div>)}
           {commits.length > 0 && (<div className="status-bar"><span className="status-dot" /><VscGitCommit size={14} />{commits.length} 个提交</div>)}
           {commits.length === 0 && !error && !loading && (<div className="empty-state"><VscEmptyWindow size={48} /><p style={{ marginTop: 12 }}>输入仓库路径并加载，查看提交历史</p></div>)}

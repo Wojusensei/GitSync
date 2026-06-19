@@ -666,6 +666,166 @@ fn execute_rebase(path: String, operations: Vec<RebaseOperation>) -> Result<Stri
     Ok("rebase 成功".into())
 }
 
+// ====================
+// 语义代码搜索
+// ====================
+
+#[derive(Serialize)]
+struct SearchResult {
+    commit_hash: String,
+    author: String,
+    time: String,
+    file_path: String,
+    line_number: usize,
+    content: String,
+}
+
+#[tauri::command]
+fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
+    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
+    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+
+    for oid in revwalk {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+        let tree = commit.tree().map_err(|e| format!("无法获取树: {}", e))?;
+
+        let parent_tree = commit.parents().next().and_then(|p| p.tree().ok());
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+            .map_err(|e| format!("无法生成 Diff: {}", e))?;
+
+        let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
+        for (idx, delta) in deltas.iter().enumerate() {
+            let path = delta.new_file().path().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+
+            let patch = git2::Patch::from_diff(&diff, idx)
+                .map_err(|e| format!("Patch 创建失败: {}", e))?;
+            if let Some(mut p) = patch {
+                let mut line_number = 0usize;
+                p.print(&mut |_delta, _hunk, line| {
+                    let content = std::str::from_utf8(line.content()).unwrap_or("");
+                    if content.to_lowercase().contains(&query_lower) {
+                        line_number += 1;
+                        results.push(SearchResult {
+                            commit_hash: oid.to_string(),
+                            author: commit.author().name().unwrap_or("未知").to_string(),
+                            time: "".to_string(),
+                            file_path: path.clone(),
+                            line_number,
+                            content: content.to_string(),
+                        });
+                    }
+                    true
+                }).ok();
+            }
+        }
+
+        if results.len() >= 200 {
+            break;
+        }
+    }
+
+    Ok(results)
+}
+
+// ====================
+// 差异对比
+// ====================
+
+#[derive(Serialize)]
+struct DiffResult {
+    commit_a: String,
+    commit_b: String,
+    diff: String,
+}
+
+#[tauri::command]
+fn compare_commits(path: String, commit_a: String, commit_b: String) -> Result<DiffResult, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    let oid_a = Oid::from_str(&commit_a).map_err(|e| format!("无效的哈希 A: {}", e))?;
+    let oid_b = Oid::from_str(&commit_b).map_err(|e| format!("无效的哈希 B: {}", e))?;
+
+    let commit_a = repo.find_commit(oid_a).map_err(|e| format!("找不到提交 A: {}", e))?;
+    let commit_b = repo.find_commit(oid_b).map_err(|e| format!("找不到提交 B: {}", e))?;
+
+    let tree_a = commit_a.tree().map_err(|e| format!("无法获取树 A: {}", e))?;
+    let tree_b = commit_b.tree().map_err(|e| format!("无法获取树 B: {}", e))?;
+
+    let diff = repo
+        .diff_tree_to_tree(Some(&tree_a), Some(&tree_b), None)
+        .map_err(|e| format!("无法生成 Diff: {}", e))?;
+
+    let mut diff_text = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        diff_text.push_str(std::str::from_utf8(line.content()).unwrap_or(""));
+        true
+    }).map_err(|e| format!("Diff 打印失败: {}", e))?;
+
+    Ok(DiffResult {
+        commit_a: commit_a.id().to_string(),
+        commit_b: commit_b.id().to_string(),
+        diff: diff_text,
+    })
+}
+
+// ====================
+// 变更日志生成
+// ====================
+
+#[derive(Serialize)]
+struct ChangelogEntry {
+    version: String,
+    date: String,
+    messages: Vec<String>,
+}
+
+#[tauri::command]
+fn generate_changelog(path: String, count: usize) -> Result<Vec<ChangelogEntry>, String> {
+    let commits = get_commits(path)?;
+    let mut entries: Vec<ChangelogEntry> = Vec::new();
+
+    let mut current_date = String::new();
+    let mut current_messages = Vec::new();
+
+    for commit in commits.iter().take(count) {
+        let date = &commit.time[..10];
+        if date != current_date {
+            if !current_date.is_empty() {
+                entries.push(ChangelogEntry {
+                    version: current_date.to_string(),
+                    date: current_date.to_string(),
+                    messages: current_messages.clone(),
+                });
+            }
+            current_date = date.to_string();
+            current_messages = Vec::new();
+        }
+        current_messages.push(commit.message.clone());
+    }
+
+    if !current_date.is_empty() {
+        entries.push(ChangelogEntry {
+            version: current_date.to_string(),
+            date: current_date,
+            messages: current_messages,
+        });
+    }
+
+    Ok(entries)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -683,7 +843,10 @@ fn main() {
             stash_pop,
             stash_drop,
             get_rebase_commits,
-            execute_rebase
+            execute_rebase,
+            semantic_search,
+            compare_commits,
+            generate_changelog
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");
