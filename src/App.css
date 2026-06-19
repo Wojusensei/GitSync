@@ -79,3 +79,54 @@ body{font-family:'Inter','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-ser
 .file-status-R{background:rgba(156,39,176,0.2);color:#9c27b0}
 .file-path{color:#dfe6e9}
 .diff-content{font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.6;padding:12px 14px;overflow-x:auto;white-space:pre;color:rgba(255,255,255,0.7)}
+/* 操作按钮 */
+.detail-action-btn{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#c8d6e5;border-radius:6px;padding:2px 8px;cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center}
+.detail-action-btn:hover{background:rgba(91,155,213,0.15);border-color:rgba(91,155,213,0.3);color:#5B9BD5}
+
+/* Blame 面板 */
+.blame-panel{margin-top:8px;border:1px solid rgba(255,255,255,0.06);border-radius:10px;overflow:hidden;background:rgba(0,0,0,0.3)}
+.blame-header{padding:10px 14px;font-size:13px;font-weight:600;color:#dfe6e9;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.05)}
+.blame-line{display:flex;align-items:center;gap:12px;padding:4px 14px;font-family:'SF Mono',monospace;font-size:12px;border-bottom:1px solid rgba(255,255,255,0.02);transition:background 0.2s}
+.blame-line:hover{background:rgba(255,255,255,0.02)}
+.blame-hash{color:#5B9BD5;min-width:70px}
+.blame-author{color:#c8d6e5;min-width:100px}
+.blame-time{color:rgba(255,255,255,0.4);min-width:140px}
+.blame-content{color:rgba(255,255,255,0.7);flex:1;white-space:pre;overflow-x:auto}
+
+/* 文件时间线面板 */
+.timeline-panel{margin-top:8px;border:1px solid rgba(255,255,255,0.06);border-radius:10px;overflow:hidden;background:rgba(0,0,0,0.3)}
+.timeline-header{padding:10px 14px;font-size:13px;font-weight:600;color:#dfe6e9;background:rgba(255,255,255,0.03);border-bottom:1px solid rgba(255,255,255,0.05)}
+.timeline-entry{padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.03)}
+.timeline-entry-header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+
+.analysis-panel {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  padding: 20px;
+  backdrop-filter: blur(12px);
+  margin-bottom: 16px;
+}
+.analysis-panel h3 {
+  font-size: 15px;
+  color: #dfe6e9;
+  margin-bottom: 10px;
+}
+.analysis-section {
+  margin-bottom: 12px;
+}
+.analysis-item {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.rebase-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
