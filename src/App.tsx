@@ -10,6 +10,12 @@ import ExportReport from './components/ExportReport';
 import ChangelogGenerator from './components/ChangelogGenerator';
 import EnhancedRebase from './components/EnhancedRebase';
 import CommandPalette from './components/CommandPalette';
+import GraphView from './components/GraphView';
+import FileTree from './components/FileTree';
+import CommitFilter from './components/CommitFilter';
+import TagManager from './components/TagManager';
+import RemoteManager from './components/RemoteManager';
+import MultiRepo from './components/MultiRepo';
 
 interface Commit {
   hash: string;
@@ -74,13 +80,6 @@ interface StashEntry {
   message: string;
 }
 
-interface RebaseCommit {
-  hash: string;
-  message: string;
-  author: string;
-  time: string;
-}
-
 interface RebaseOperation {
   hash: string;
   action: string;
@@ -114,7 +113,7 @@ function App() {
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [mousePos, setMousePos] = useState({ x: 0.5, y: 0.5 });
+  
   const [searchQuery, setSearchQuery] = useState('');
   const { ripples, createRipple } = useRipple();
 
@@ -138,12 +137,18 @@ function App() {
   const [showHotFiles, setShowHotFiles] = useState(false);
   const [showStash, setShowStash] = useState(false);
   const [showRebase, setShowRebase] = useState(false);
+  const [showGraph, setShowGraph] = useState(false);
+  const [showFileTree, setShowFileTree] = useState(false);
+  const [showCommitFilter, setShowCommitFilter] = useState(false);
+  const [showTagManager, setShowTagManager] = useState(false);
+  const [showRemoteManager, setShowRemoteManager] = useState(false);
+  const [showMultiRepo, setShowMultiRepo] = useState(false);
 
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [hotFiles, setHotFiles] = useState<HotFile[]>([]);
   const [stashList, setStashList] = useState<StashEntry[]>([]);
-  const [rebaseCommits, setRebaseCommits] = useState<RebaseCommit[]>([]);
+ 
   const [rebaseOps, setRebaseOps] = useState<RebaseOperation[]>([]);
   const [showSemanticSearch, setShowSemanticSearch] = useState(false);
   const [showDiffViewer, setShowDiffViewer] = useState(false);
@@ -169,7 +174,7 @@ function App() {
 
   useEffect(() => {
     const handleMouse = (e: MouseEvent) => {
-      setMousePos({ x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight });
+      
       pointerX.set(e.clientX);
       pointerY.set(e.clientY);
     };
@@ -336,15 +341,6 @@ function App() {
     } catch (e: any) { setError(e); }
   };
 
-  const loadRebaseCommits = async () => {
-    try {
-      const res = await invoke<RebaseCommit[]>('get_rebase_commits', { path: repoPath, count: 20 });
-      setRebaseCommits(res);
-      setRebaseOps(res.map(c => ({ hash: c.hash, action: 'pick' })));
-      setShowRebase(true);
-    } catch (e: any) { setError(e); }
-  };
-
   const execRebase = async (ops: RebaseOperation[]) => {
     try {
       await invoke('execute_rebase', { path: repoPath, operations: ops });
@@ -377,11 +373,17 @@ function App() {
   { id: 'contributors', label: '贡献者统计', action: () => { setShowContributors(true); loadContributors(); } },
   { id: 'hotfiles', label: '热点文件', action: () => { setShowHotFiles(true); loadHotFiles(); } },
   { id: 'stash', label: 'Stash 管理', action: () => { setShowStash(true); loadStashList(); } },
-  { id: 'rebase', label: '交互 Rebase', action: () => { setShowRebase(true); loadRebaseCommits(); } },
+  { id: 'rebase', label: '交互 Rebase', action: () => setShowEnhancedRebase(true) },
   { id: 'search', label: '语义搜索', action: () => setShowSemanticSearch(true) },
   { id: 'diff', label: '差异对比', action: () => setShowDiffViewer(true) },
   { id: 'export', label: '导出报告', action: () => setShowExport(true) },
   { id: 'changelog', label: '生成变更日志', action: () => setShowChangelog(true) },
+  { id: 'graph', label: '提交图', action: () => setShowGraph(true) },
+  { id: 'filetree', label: '文件树', action: () => setShowFileTree(true) },
+  { id: 'filter', label: '提交筛选', action: () => setShowCommitFilter(true) },
+  { id: 'tags', label: '标签管理', action: () => setShowTagManager(true) },
+  { id: 'remotes', label: '远程仓库', action: () => setShowRemoteManager(true) },
+  { id: 'multirepo', label: '多仓库', action: () => setShowMultiRepo(true) },
 ]} />
 
       <div className="app">
@@ -427,12 +429,18 @@ function App() {
           <div className="branch-item" onClick={loadContributors}>贡献者统计</div>
           <div className="branch-item" onClick={loadHotFiles}>热点文件</div>
           <div className="branch-item" onClick={loadStashList}>Stash 管理</div>
-          <div className="branch-item" onClick={loadRebaseCommits}>交互 Rebase</div>
+          <div className="branch-item" onClick={() => setShowEnhancedRebase(!showEnhancedRebase)}>交互 Rebase</div>
           <div className="branch-item" onClick={() => setShowSemanticSearch(!showSemanticSearch)}>语义搜索</div>
           <div className="branch-item" onClick={() => setShowDiffViewer(!showDiffViewer)}>差异对比</div>
           <div className="branch-item" onClick={() => setShowExport(!showExport)}>导出报告</div>
           <div className="branch-item" onClick={() => setShowChangelog(!showChangelog)}>变更日志</div>
           <div className="branch-item" onClick={() => setShowEnhancedRebase(!showEnhancedRebase)}>Rebase 增强</div>
+          <div className="branch-item" onClick={() => setShowGraph(!showGraph)}>提交图</div>
+          <div className="branch-item" onClick={() => setShowFileTree(!showFileTree)}>文件树</div>
+          <div className="branch-item" onClick={() => setShowCommitFilter(!showCommitFilter)}>提交筛选</div>
+          <div className="branch-item" onClick={() => setShowTagManager(!showTagManager)}>标签管理</div>
+          <div className="branch-item" onClick={() => setShowRemoteManager(!showRemoteManager)}>远程仓库</div>
+          <div className="branch-item" onClick={() => setShowMultiRepo(!showMultiRepo)}>多仓库</div>
         </aside>
 
         <main className="main" ref={mainRef}>
@@ -440,6 +448,12 @@ function App() {
           {showDiffViewer && <DiffViewer repoPath={repoPath} />}
           {showExport && <ExportReport healthReport={healthReport} contributors={contributors} hotFiles={hotFiles} />}
           {showChangelog && <ChangelogGenerator repoPath={repoPath} />}
+          {showGraph && <GraphView repoPath={repoPath} onSelectCommit={(hash) => handleCommitClick(hash)} />}
+          {showFileTree && <FileTree repoPath={repoPath} onSelectFile={(path) => console.log('Selected file:', path)} />}
+          {showCommitFilter && <CommitFilter repoPath={repoPath} onFiltered={(commits) => setCommits(commits)} />}
+          {showTagManager && <TagManager repoPath={repoPath} />}
+          {showRemoteManager && <RemoteManager repoPath={repoPath} />}
+          {showMultiRepo && <MultiRepo onSelectRepo={(path) => setRepoPath(path)} />}
           {showEnhancedRebase && <EnhancedRebase repoPath={repoPath} onComplete={() => { setShowEnhancedRebase(false); loadRepo(); }} />}
           {error && (<motion.div className="error" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>{error}</motion.div>)}
           {commits.length > 0 && (<div className="status-bar"><span className="status-dot" /><VscGitCommit size={14} />{commits.length} 个提交</div>)}

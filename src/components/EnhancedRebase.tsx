@@ -16,14 +16,13 @@ interface RebaseOperation {
 }
 
 export default function EnhancedRebase({ repoPath, onComplete }: { repoPath: string; onComplete: () => void }) {
-  const [commits, setCommits] = useState<RebaseCommit[]>([]);
+  
   const [ops, setOps] = useState<RebaseOperation[]>([]);
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
     try {
       const res = await invoke<RebaseCommit[]>('get_rebase_commits', { path: repoPath, count: 20 });
-      setCommits(res);
       setOps(res.map(c => ({ hash: c.hash, action: 'pick' })));
     } catch (e) { console.error(e); }
   };

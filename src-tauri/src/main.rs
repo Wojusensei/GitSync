@@ -826,6 +826,168 @@ fn generate_changelog(path: String, count: usize) -> Result<Vec<ChangelogEntry>,
     Ok(entries)
 }
 
+// ====================
+// 提交图数据
+// ====================
+
+#[derive(Serialize)]
+struct GraphCommit {
+    hash: String,
+    author: String,
+    time: String,
+    message: String,
+    parent_hashes: Vec<String>,
+}
+
+#[tauri::command]
+fn get_graph_commits(path: String) -> Result<Vec<GraphCommit>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
+    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
+    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+
+    let mut results = Vec::new();
+    for oid in revwalk {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+        let time = commit.time();
+        let timestamp = chrono::DateTime::from_timestamp(time.seconds(), 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "未知时间".into());
+
+        let parents: Vec<String> = commit.parent_ids().map(|id| id.to_string()).collect();
+
+        results.push(GraphCommit {
+            hash: oid.to_string(),
+            author: commit.author().name().unwrap_or("未知").to_string(),
+            time: timestamp,
+            message: commit.message().unwrap_or("").to_string(),
+            parent_hashes: parents,
+        });
+        if results.len() >= 100 { break; }
+    }
+    Ok(results)
+}
+
+// ====================
+// 文件树
+// ====================
+
+#[derive(Serialize)]
+struct TreeNode {
+    name: String,
+    is_directory: bool,
+    children: Vec<TreeNode>,
+}
+
+#[tauri::command]
+fn get_file_tree(path: String) -> Result<Vec<TreeNode>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    let head = repo.head().map_err(|e| format!("无法获取 HEAD: {}", e))?;
+    let commit = head.peel_to_commit().map_err(|e| format!("无法解引用: {}", e))?;
+    let tree = commit.tree().map_err(|e| format!("无法获取树: {}", e))?;
+
+    fn build_tree(tree: &git2::Tree<'_>, repo: &Repository, prefix: &str) -> Result<Vec<TreeNode>, String> {
+        let mut nodes = std::collections::BTreeMap::new();
+        for entry in tree.iter() {
+            let name = if let Ok(n) = entry.name() {
+                n.to_string()
+            } else {
+                continue;
+            };
+            let full_path = if prefix.is_empty() { name.clone() } else { format!("{}/{}", prefix, name) };
+            if entry.kind() == Some(git2::ObjectType::Tree) {
+                let sub_tree = repo.find_tree(entry.id()).map_err(|e| format!("{}", e))?;
+                let children = build_tree(&sub_tree, repo, &full_path)?;
+                nodes.insert(name.clone(), TreeNode { name, is_directory: true, children });
+            } else {
+                nodes.entry(name.clone()).or_insert(TreeNode { name, is_directory: false, children: vec![] });
+            }
+        }
+        Ok(nodes.into_values().collect())
+    }
+
+    build_tree(&tree, &repo, "")
+}
+
+// ====================
+// 提交筛选
+// ====================
+
+#[tauri::command]
+fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, _file_path: Option<String>) -> Result<Vec<Commit>, String> {
+    let all = get_commits(path)?;
+    let filtered: Vec<Commit> = all.into_iter().filter(|c| {
+        if let Some(ref a) = author { if !c.author.to_lowercase().contains(&a.to_lowercase()) { return false; } }
+        if let Some(ref df) = date_from { if c.time < *df { return false; } }
+        if let Some(ref dt) = date_to { if c.time > *dt { return false; } }
+        true
+    }).collect();
+    Ok(filtered)
+}
+
+// ====================
+// 标签管理
+// ====================
+
+#[derive(Serialize)]
+struct TagInfo {
+    name: String,
+    commit_hash: String,
+}
+
+#[tauri::command]
+fn get_tags(path: String) -> Result<Vec<TagInfo>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    let mut tags = Vec::new();
+    for name in repo.tag_names(None).map_err(|e| format!("无法获取标签: {}", e))?.iter() {
+        if let Ok(Some(name)) = name {
+            if let Ok(obj) = repo.revparse_single(name) {
+                tags.push(TagInfo { name: name.to_string(), commit_hash: obj.id().to_string() });
+            }
+        }
+    }
+    Ok(tags)
+}
+
+#[tauri::command]
+fn create_tag(path: String, name: String, commit_hash: String) -> Result<(), String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    let oid = Oid::from_str(&commit_hash).map_err(|e| format!("无效哈希: {}", e))?;
+    let obj = repo.find_object(oid, None).map_err(|e| format!("找不到对象: {}", e))?;
+    repo.tag(&name, &obj, &repo.signature().map_err(|e| format!("签名失败: {}", e))?, "", false).map_err(|e| format!("创建标签失败: {}", e))?;
+    Ok(())
+}
+
+// ====================
+// 远程仓库管理
+// ====================
+
+#[derive(Serialize)]
+struct RemoteInfo {
+    name: String,
+    url: String,
+}
+
+#[tauri::command]
+fn get_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    let mut remotes = Vec::new();
+    for name in repo.remotes().map_err(|e| format!("无法获取远程: {}", e))?.iter() {
+        if let Ok(Some(name)) = name {
+            if let Ok(url) = repo.find_remote(name) {
+                remotes.push(RemoteInfo { name: name.to_string(), url: url.url().unwrap_or("").to_string() });
+            }
+        }
+    }
+    Ok(remotes)
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -846,7 +1008,13 @@ fn main() {
             execute_rebase,
             semantic_search,
             compare_commits,
-            generate_changelog
+            generate_changelog,
+            get_graph_commits,
+            get_file_tree,
+            filter_commits,
+            get_tags,
+            create_tag,
+            get_remotes
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");
