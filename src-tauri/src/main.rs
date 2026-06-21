@@ -666,10 +666,6 @@ fn execute_rebase(path: String, operations: Vec<RebaseOperation>) -> Result<Stri
     Ok("rebase 成功".into())
 }
 
-// ====================
-// 语义代码搜索
-// ====================
-
 #[derive(Serialize)]
 struct SearchResult {
     commit_hash: String,
@@ -737,10 +733,6 @@ fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, Str
     Ok(results)
 }
 
-// ====================
-// 差异对比
-// ====================
-
 #[derive(Serialize)]
 struct DiffResult {
     commit_a: String,
@@ -779,10 +771,6 @@ fn compare_commits(path: String, commit_a: String, commit_b: String) -> Result<D
         diff: diff_text,
     })
 }
-
-// ====================
-// 变更日志生成
-// ====================
 
 #[derive(Serialize)]
 struct ChangelogEntry {
@@ -826,10 +814,6 @@ fn generate_changelog(path: String, count: usize) -> Result<Vec<ChangelogEntry>,
     Ok(entries)
 }
 
-// ====================
-// 提交图数据
-// ====================
-
 #[derive(Serialize)]
 struct GraphCommit {
     hash: String,
@@ -870,10 +854,6 @@ fn get_graph_commits(path: String) -> Result<Vec<GraphCommit>, String> {
     Ok(results)
 }
 
-// ====================
-// 文件树
-// ====================
-
 #[derive(Serialize)]
 struct TreeNode {
     name: String,
@@ -912,10 +892,6 @@ fn get_file_tree(path: String) -> Result<Vec<TreeNode>, String> {
     build_tree(&tree, &repo, "")
 }
 
-// ====================
-// 提交筛选
-// ====================
-
 #[tauri::command]
 fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, _file_path: Option<String>) -> Result<Vec<Commit>, String> {
     let all = get_commits(path)?;
@@ -927,10 +903,6 @@ fn filter_commits(path: String, author: Option<String>, date_from: Option<String
     }).collect();
     Ok(filtered)
 }
-
-// ====================
-// 标签管理
-// ====================
 
 #[derive(Serialize)]
 struct TagInfo {
@@ -963,10 +935,6 @@ fn create_tag(path: String, name: String, commit_hash: String) -> Result<(), Str
     Ok(())
 }
 
-// ====================
-// 远程仓库管理
-// ====================
-
 #[derive(Serialize)]
 struct RemoteInfo {
     name: String,
@@ -987,10 +955,6 @@ fn get_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
     }
     Ok(remotes)
 }
-
-// ====================
-// Diff 语法高亮与并排对比
-// ====================
 
 #[derive(Serialize)]
 struct DiffDetail {
@@ -1101,10 +1065,6 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
     (old_start, old_lines, new_start, new_lines)
 }
 
-// ====================
-// 虚拟滚动分页
-// ====================
-
 #[tauri::command]
 fn get_commits_paginated(path: String, page: usize, page_size: usize) -> Result<(Vec<Commit>, usize), String> {
     let all = get_commits(path)?;
@@ -1114,10 +1074,6 @@ fn get_commits_paginated(path: String, page: usize, page_size: usize) -> Result<
     let page_data = all[start..end].to_vec();
     Ok((page_data, total))
 }
-
-// ====================
-// Git Hooks 管理
-// ====================
 
 #[tauri::command]
 fn get_hooks(path: String) -> Result<Vec<String>, String> {
@@ -1144,10 +1100,6 @@ fn save_hook_content(path: String, hook_name: String, content: String) -> Result
     std::fs::write(&hook_path, content).map_err(|e| format!("写入失败: {}", e))?;
     Ok(())
 }
-
-// ====================
-// 图形化合并冲突解决
-// ====================
 
 #[derive(Serialize)]
 struct ConflictDetail {
@@ -1239,9 +1191,26 @@ fn resolve_conflict(path: String, file_path: String, resolution: String) -> Resu
     Ok(())
 }
 
-// ====================
-// 插件/脚本扩展系统
-// ====================
+#[tauri::command]
+fn export_report_markdown(path: String) -> Result<String, String> {
+    let health = get_health_report(path.clone())?;
+    let contributors = get_contributors(path.clone())?;
+    let hot_files = get_hot_files(path.clone())?;
+
+    let mut md = String::from("# 仓库分析报告\n\n## 健康报告\n");
+    md.push_str(&format!("- 大文件: {}\n", health.large_files.join(", ")));
+    md.push_str(&format!("- 无上游分支: {}\n", health.stale_branches.join(", ")));
+    md.push_str(&format!("- 冲突文件: {}\n\n", health.conflicts.join(", ")));
+    md.push_str("## 贡献者统计\n");
+    for c in &contributors {
+        md.push_str(&format!("- {}: {} 次提交, +{}/-{}\n", c.author, c.commits, c.additions, c.deletions));
+    }
+    md.push_str("\n## 热点文件\n");
+    for f in &hot_files {
+        md.push_str(&format!("- {}: {} 次变更\n", f.path, f.changes));
+    }
+    Ok(md)
+}
 
 #[tauri::command]
 fn list_scripts() -> Result<Vec<String>, String> {
@@ -1283,28 +1252,150 @@ fn run_script(path: String, script_name: String) -> Result<String, String> {
 }
 
 // ====================
-// 导出报告
+// SQL 查询引擎
 // ====================
 
-#[tauri::command]
-fn export_report_markdown(path: String) -> Result<String, String> {
-    let health = get_health_report(path.clone())?;
-    let contributors = get_contributors(path.clone())?;
-    let hot_files = get_hot_files(path.clone())?;
+#[derive(Serialize)]
+struct QueryResult {
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+    elapsed_ms: u64,
+}
 
-    let mut md = String::from("# 仓库分析报告\n\n## 健康报告\n");
-    md.push_str(&format!("- 大文件: {}\n", health.large_files.join(", ")));
-    md.push_str(&format!("- 无上游分支: {}\n", health.stale_branches.join(", ")));
-    md.push_str(&format!("- 冲突文件: {}\n\n", health.conflicts.join(", ")));
-    md.push_str("## 贡献者统计\n");
-    for c in &contributors {
-        md.push_str(&format!("- {}: {} 次提交, +{}/-{}\n", c.author, c.commits, c.additions, c.deletions));
+#[tauri::command]
+fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
+    let start = std::time::Instant::now();
+
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    let sql_upper = sql.to_uppercase();
+    let select_idx = sql_upper.find("SELECT").ok_or("需要 SELECT 语句")?;
+    let from_idx = sql_upper.find("FROM").ok_or("需要 FROM 子句")?;
+    let where_idx = sql_upper.find("WHERE");
+    let order_idx = sql_upper.find("ORDER BY");
+    let limit_idx = sql_upper.find("LIMIT");
+
+    let select_part = &sql[select_idx + 6..from_idx].trim();
+    let columns: Vec<String> = if *select_part == "*" {
+        vec!["hash".into(), "author".into(), "time".into(), "message".into()]
+    } else {
+        select_part.split(',').map(|s| s.trim().to_lowercase()).collect()
+    };
+
+    let from_part = &sql[from_idx + 4..where_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())))].trim();
+    if from_part.to_lowercase() != "commits" {
+        return Err("目前只支持 FROM commits".into());
     }
-    md.push_str("\n## 热点文件\n");
-    for f in &hot_files {
-        md.push_str(&format!("- {}: {} 次变更\n", f.path, f.changes));
+
+    let mut author_filter: Option<String> = None;
+    let mut time_after: Option<String> = None;
+    let mut time_before: Option<String> = None;
+    let mut message_contains: Option<String> = None;
+
+    if let Some(wi) = where_idx {
+        let where_end = order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()));
+        let where_part = &sql[wi + 5..where_end].trim();
+        let conditions: Vec<&str> = where_part.split("AND").map(|s| s.trim()).collect();
+
+        for cond in conditions {
+            let cond_upper = cond.to_uppercase();
+            if cond_upper.contains("AUTHOR =") {
+                if let Some(val) = cond.split('=').nth(1) {
+                    author_filter = Some(val.trim().trim_matches('\'').to_string());
+                }
+            } else if cond_upper.contains("TIME >") {
+                if let Some(val) = cond.split('>').nth(1) {
+                    time_after = Some(val.trim().trim_matches('\'').to_string());
+                }
+            } else if cond_upper.contains("TIME <") {
+                if let Some(val) = cond.split('<').nth(1) {
+                    time_before = Some(val.trim().trim_matches('\'').to_string());
+                }
+            } else if cond_upper.contains("MESSAGE CONTAINS") || cond_upper.contains("MESSAGE LIKE") {
+                if let Some(val) = cond.split("CONTAINS").nth(1).or_else(|| cond.split("LIKE").nth(1)) {
+                    message_contains = Some(val.trim().trim_matches('\'').trim_matches('%').to_string());
+                }
+            }
+        }
     }
-    Ok(md)
+
+    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
+    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
+    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+
+    let mut all_commits: Vec<Commit> = Vec::new();
+    for oid in revwalk {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+        let time = commit.time();
+        let timestamp = chrono::DateTime::from_timestamp(time.seconds(), 0)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "未知时间".into());
+
+        all_commits.push(Commit {
+            hash: oid.to_string(),
+            author: commit.author().name().unwrap_or("未知").to_string(),
+            time: timestamp,
+            message: commit.message().unwrap_or("").to_string(),
+        });
+
+        if all_commits.len() >= 200 { break; }
+    }
+
+    let filtered: Vec<Commit> = all_commits.into_iter().filter(|c| {
+        if let Some(ref a) = author_filter {
+            if c.author.to_lowercase() != a.to_lowercase() { return false; }
+        }
+        if let Some(ref t) = time_after {
+            if c.time < *t { return false; }
+        }
+        if let Some(ref t) = time_before {
+            if c.time > *t { return false; }
+        }
+        if let Some(ref m) = message_contains {
+            if !c.message.to_lowercase().contains(&m.to_lowercase()) { return false; }
+        }
+        true
+    }).collect();
+
+    let mut result_commits = filtered;
+    if let Some(oi) = order_idx {
+        let order_part = &sql[oi + 8..limit_idx.unwrap_or(sql.len())].trim();
+        if order_part.to_uppercase().contains("DESC") {
+            result_commits.reverse();
+        }
+    }
+
+    if let Some(li) = limit_idx {
+        let limit_part = &sql[li + 5..].trim();
+        if let Ok(limit) = limit_part.parse::<usize>() {
+            result_commits.truncate(limit);
+        }
+    }
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for c in &result_commits {
+        let mut row = Vec::new();
+        for col in &columns {
+            match col.as_str() {
+                "hash" => row.push(c.hash.clone()),
+                "author" => row.push(c.author.clone()),
+                "time" => row.push(c.time.clone()),
+                "message" => row.push(c.message.clone()),
+                _ => row.push("未知列".into()),
+            }
+        }
+        rows.push(row);
+    }
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    Ok(QueryResult {
+        columns,
+        rows,
+        elapsed_ms: elapsed,
+    })
 }
 
 fn main() {
@@ -1341,9 +1432,10 @@ fn main() {
             save_hook_content,
             get_conflict_detail,
             resolve_conflict,
+            export_report_markdown,
             list_scripts,
             run_script,
-            export_report_markdown
+            git_query
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");

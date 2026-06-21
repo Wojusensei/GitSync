@@ -10,7 +10,7 @@ interface GraphCommit {
   parent_hashes: string[];
 }
 
-export default function GraphView({ repoPath, onSelectCommit }: { repoPath: string; onSelectCommit: (hash: string) => void }) {
+export default function GraphView({ repoPath, onSelectCommit: _onSelectCommit }: { repoPath: string; onSelectCommit: (hash: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 

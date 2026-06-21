@@ -146,3 +146,26 @@ body{font-family:'Inter','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-ser
 .section-header .section-title {
   margin-bottom: 0;
 }
+
+.query-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.query-table th {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 6px 10px;
+  text-align: left;
+  color: #5B9BD5;
+  font-weight: 600;
+}
+.query-table td {
+  border: 1px solid rgba(255,255,255,0.05);
+  padding: 4px 10px;
+  color: #c8d6e5;
+  white-space: nowrap;
+}
+.query-table tr:hover td {
+  background: rgba(255,255,255,0.02);
+}
