@@ -1,8 +1,8 @@
-# Git Lens
+# Git Tool
 
 交互式 Git 历史浏览器，可视化提交图、分支、差异对比、Blame 等，帮助开发者更直观地理解和管理 Git 仓库。
 
-🌐 支持 macOS 和 Windows，基于 Rust + Tauri 构建，性能优异。
+🌐 支持 macOS 和 Windows，基于 Rust + Tauri 构建，性能爆炸！
 
 ## ✨ 功能
 
@@ -19,6 +19,9 @@
 - **语义代码搜索**：搜索代码内容在所有历史变更中的出现
 - **差异对比**：任意两个提交并排对比
 - **命令面板**：按 `Cmd/Ctrl + K` 快速访问所有功能
+- **图形化冲突解决**：三列并排对比，一键采用当前/传入分支
+- **插件脚本系统**：自定义脚本扩展，放入 `~/.git-tool/scripts/` 即可用
+- **折叠面板**：侧边栏功能分组，按需展开
 
 ## 📥 下载
 
@@ -26,19 +29,19 @@
 
 ### macOS
 
-- [git-tool.app.zip](https://github.com/Wojusensei/git-tool/releases/download/v0.1.0/git-tool.app.zip)
+- [git-tool_0.2.0_aarch64.dmg](https://github.com/Wojusensei/git-tool/releases/download/v0.2.0/git-tool_0.2.0_aarch64.dmg)
 
-下载后解压得到 `git-tool.app`，将其拖入 **Applications** 文件夹即可完成安装。
+双击 `.dmg` 文件，将 Git Tool 拖入 **Applications** 文件夹即可完成安装。
 
 ### Windows
 
-- [git-tool_0.1.0_x64-setup.exe](https://github.com/Wojusensei/git-tool/releases/download/v0.1.0/git-tool_0.1.0_x64-setup.exe)
+- [git-tool_0.2.0_x64-setup.exe](https://github.com/Wojusensei/git-tool/releases/download/v0.2.0/git-tool_0.2.0_x64-setup.exe)
 
 双击 `.exe` 安装程序，按提示完成安装。
 
 ## 🚀 使用
 
-1. 启动 Git Lens
+1. 启动 Git-Tool
 2. 在顶部输入框中输入本地 Git 仓库的完整路径（例如 `/Users/name/projects/my-repo`）
 3. 按回车或点击 **加载** 按钮
 4. 主区域将显示提交历史，侧边栏提供分支、分析工具等功能入口
@@ -55,7 +58,7 @@
 
 ## 🤝 贡献
 
-欢迎提交 Issue 和 Pull Request。请确保代码符合项目风格，并在提交前运行 `cargo clippy` 和 `npm run build` 检查。
+欢迎提交 Issue 和 Pull Request。请确保代码符合项目风格，并在提交前运行 `cargo clippy` 和 `npm run build` 检查。欢迎所有用户开发插件，未来或将对插件进行统一管理
 
 ## 📄 开源协议
 
