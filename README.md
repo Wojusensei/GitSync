@@ -25,17 +25,17 @@
 
 ## 📥 下载
 
-前往 [Releases](https://github.com/Wojusensei/git-tool/releases) 页面获取最新安装包。
+前往 [Releases](https://github.com/Wojusensei/GitSync/releases) 页面获取最新安装包。
 
 ### macOS
 
-- [git-tool_0.2.0_aarch64.dmg](https://github.com/Wojusensei/git-tool/releases/download/v0.2.0/git-tool_0.2.0_aarch64.dmg)
+- [GitSync_0.2.2_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.2.2/GitSync_0.2.2_aarch64.dmg)
 
-双击 `.dmg` 文件，将 Git Tool 拖入 **Applications** 文件夹即可完成安装。
+双击 `.dmg` 文件，将 GitSync 拖入 **Applications** 文件夹即可完成安装。
 
 ### Windows
 
-- [git-tool_0.2.0_x64-setup.exe](https://github.com/Wojusensei/git-tool/releases/download/v0.2.0/git-tool_0.2.0_x64-setup.exe)
+- [GitSync_0.2.2_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.2.2/GitSync_0.2.2_x64-setup.exe)
 
 双击 `.exe` 安装程序，按提示完成安装。
 
