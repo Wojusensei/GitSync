@@ -334,7 +334,7 @@ function App() {
 
       <div className="app">
         <header className="topbar">
-          <h1><SiGit size={22} color="#5B9BD5" /> Git Tool</h1>
+          <h1><SiGit size={22} color="#5B9BD5" /> GitSync</h1>
           <input className="path-input" type="text" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="输入仓库路径..." onKeyDown={(e) => e.key === 'Enter' && loadRepo()} />
           <div style={{ display: 'flex', gap: 8, flex: 1 }}>
             <input className="path-input" type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索提交..." onKeyDown={(e) => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
