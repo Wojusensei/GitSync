@@ -58,7 +58,7 @@
 
 ## 🤝 贡献
 
-欢迎提交 Issue 和 Pull Request。请确保代码符合项目风格，并在提交前运行 `cargo clippy` 和 `npm run build` 检查。欢迎所有用户开发插件，未来或将对插件进行统一管理
+欢迎提交 Issue 和 Pull Request。请确保代码符合项目风格，并在提交前运行 `cargo clippy` 和 `npm run build` 检查。欢迎所有用户开发插件，未来或将对插件进行统一管理（插件数量够多的情况下）
 
 ## 📄 开源协议
 
