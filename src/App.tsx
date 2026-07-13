@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
 import { SiGit } from 'react-icons/si';
-import { VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory, VscChevronRight } from 'react-icons/vsc';
+import { VscWarning, VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory, VscChevronRight } from 'react-icons/vsc';
 import './App.css';
 
 import SemanticSearch from './components/SemanticSearch';
@@ -134,12 +134,41 @@ function App() {
   const [order, setOrder] = useState<number[]>([]);
   const dragConstraintRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
-  const [scrollY, setScrollY] = useState(0);
 
   const pointerX = useMotionValue(window.innerWidth / 2);
   const pointerY = useMotionValue(window.innerHeight / 2);
   const springX = useSpring(pointerX, { stiffness: 200, damping: 30 });
   const springY = useSpring(pointerY, { stiffness: 200, damping: 30 });
+
+  // Safe directory state
+  const [safeDirModalPath, setSafeDirModalPath] = useState<string | null>(null);
+  const [safeDirFixing, setSafeDirFixing] = useState(false);
+  const [safeDirFixingError, setSafeDirFixingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (error && error.includes("is not owned by current user")) {
+      const match = error.match(/repository path '([^']+)' is not owned by current user/);
+      if (match) {
+        setSafeDirModalPath(match[1]);
+      }
+    }
+  }, [error]);
+
+  const handleFixSafeDirectory = async () => {
+    if (!safeDirModalPath) return;
+    setSafeDirFixing(true);
+    setSafeDirFixingError(null);
+    try {
+      await invoke('add_safe_directory', { path: safeDirModalPath });
+      setSafeDirModalPath(null);
+      setError('');
+      loadRepo();
+    } catch (e: any) {
+      setSafeDirFixingError(String(e));
+    } finally {
+      setSafeDirFixing(false);
+    }
+  };
 
   const [activeBlame, setActiveBlame] = useState<string | null>(null);
   const [blameData, setBlameData] = useState<BlameLine[]>([]);
@@ -231,13 +260,9 @@ function App() {
 
   useEffect(() => {
     const handleMouse = (e: MouseEvent) => { pointerX.set(e.clientX); pointerY.set(e.clientY); };
-    const handleScroll = () => { if (mainRef.current) setScrollY(mainRef.current.scrollTop); };
     window.addEventListener('mousemove', handleMouse);
-    const mainEl = mainRef.current;
-    if (mainEl) mainEl.addEventListener('scroll', handleScroll);
     return () => {
       window.removeEventListener('mousemove', handleMouse);
-      if (mainEl) mainEl.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
@@ -474,73 +499,80 @@ function App() {
               {order.map((index) => {
                 const c = commits[index];
                 if (!c) return null;
+                const isSelected = selectedCommit === c.hash;
                 return (
-                  <motion.div key={c.hash} className={`commit-item ${selectedCommit === c.hash ? 'selected' : ''}`} onClick={() => handleCommitClick(c.hash)} onMouseMove={handleMouseMove} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ delay: index * 0.02, duration: 0.3, type: 'spring', stiffness: 120 }} drag="y" dragConstraints={dragConstraintRef} dragElastic={0.2} onDragEnd={(_, info) => handleDragEnd(index, info)} whileHover={{ scale: 1.03, boxShadow: '0 16px 40px rgba(0,0,0,0.6)', rotateX: 1, rotateY: -1 }} whileTap={{ scale: 0.97 }} style={{ position: 'relative', transformStyle: 'preserve-3d' }}>
-                    <div className="torch-glow" />
-                    <div className="commit-header"><span className="hash">{c.hash.substring(0, 8)}</span><span className="author">{c.author}</span><span className="time">{c.time}</span></div>
-                    <div className="message">{c.message}</div>
-                  </motion.div>
+                  <div key={c.hash} style={{ display: 'flex', flexDirection: 'column' }}>
+                    <motion.div className={`commit-item ${isSelected ? 'selected' : ''}`} onClick={() => handleCommitClick(c.hash)} onMouseMove={handleMouseMove} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ delay: index * 0.02, duration: 0.3, type: 'spring', stiffness: 120 }} drag="y" dragConstraints={dragConstraintRef} dragElastic={0.2} onDragEnd={(_, info) => handleDragEnd(index, info)} whileHover={{ scale: 1.03, boxShadow: '0 16px 40px rgba(0,0,0,0.6)', rotateX: 1, rotateY: -1 }} whileTap={{ scale: 0.97 }} style={{ position: 'relative', transformStyle: 'preserve-3d' }}>
+                      <div className="torch-glow" />
+                      <div className="commit-header"><span className="hash">{c.hash.substring(0, 8)}</span><span className="author">{c.author}</span><span className="time">{c.time}</span></div>
+                      <div className="message">{c.message}</div>
+                    </motion.div>
+
+                    <AnimatePresence>
+                      {isSelected && (
+                        <motion.div className="commit-detail" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3, type: 'spring', stiffness: 120 }} style={{ marginTop: 8, marginBottom: 16, overflow: 'hidden' }}>
+                          {detailLoading ? (
+                            <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>加载详情中...</div>
+                          ) : commitDetail ? (
+                            <div>
+                              <div style={{ fontSize: 14, color: '#dfe6e9', marginBottom: 12, fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
+                              {commitDetail.files.map((file) => (
+                                <div key={file.path} className="detail-file">
+                                  <div className="detail-file-header">
+                                    <span className={`file-status file-status-${file.status}`}>{file.status}</span>
+                                    <span className="file-path">{file.path}</span>
+                                    <span style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', gap: 8 }}>
+                                      <span style={{ color: '#4fc1ff' }}><VscDiffAdded size={12} /> {file.additions}</span>
+                                      <span style={{ color: '#ff6b6b' }}><VscDiffRemoved size={12} /> {file.deletions}</span>
+                                      <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleBlame(file.path); }} title="查看 Blame"><VscFileCode size={14} /></button>
+                                      <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleTimeline(file.path); }} title="文件时间线"><VscHistory size={14} /></button>
+                                    </span>
+                                  </div>
+                                  
+                                  {/* Code Syntax Highlighted Diff */}
+                                  {parseAndRenderDiff(file.diff)}
+
+                                  <AnimatePresence>
+                                    {activeBlame === file.path && (
+                                      <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                        <div className="blame-header">Blame — {file.path}</div>
+                                        {blameData.map((line) => (
+                                          <div key={line.line_number} className="blame-line">
+                                            <span className="blame-hash">{line.commit_hash.substring(0, 8)}</span><span className="blame-author">{line.author}</span><span className="blame-time">{line.time}</span><span className="blame-content">{line.content}</span>
+                                          </div>
+                                        ))}
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                  <AnimatePresence>
+                                    {activeTimeline === file.path && (
+                                      <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                        <div className="timeline-header">文件历史 — {file.path}</div>
+                                        {timelineData.map((entry) => (
+                                          <div key={entry.commit_hash} className="timeline-entry">
+                                            <div className="timeline-entry-header"><span className="hash">{entry.commit_hash.substring(0, 8)}</span><span className="author">{entry.author}</span><span className="time">{entry.time}</span></div>
+                                            <div className="message">{entry.message}</div>
+                                            {/* Code Syntax Highlighted Diff */}
+                                            {parseAndRenderDiff(entry.diff)}
+                                          </div>
+                                        ))}
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>无法加载详情</div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 );
               })}
             </AnimatePresence>
           </div>
-
-          <AnimatePresence>
-            {selectedCommit && (
-              <motion.div className="commit-detail" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3, type: 'spring', stiffness: 120 }} style={{ marginTop: 16, overflow: 'hidden' }}>
-                {detailLoading ? (
-                  <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>加载详情中...</div>
-                ) : commitDetail ? (
-                  <div>
-                    <div style={{ fontSize: 14, color: '#dfe6e9', marginBottom: 12, fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
-                    {commitDetail.files.map((file) => (
-                      <div key={file.path} className="detail-file">
-                        <div className="detail-file-header">
-                          <span className={`file-status file-status-${file.status}`}>{file.status}</span>
-                          <span className="file-path">{file.path}</span>
-                          <span style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', gap: 8 }}>
-                            <span style={{ color: '#4fc1ff' }}><VscDiffAdded size={12} /> {file.additions}</span>
-                            <span style={{ color: '#ff6b6b' }}><VscDiffRemoved size={12} /> {file.deletions}</span>
-                            <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleBlame(file.path); }} title="查看 Blame"><VscFileCode size={14} /></button>
-                            <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleTimeline(file.path); }} title="文件时间线"><VscHistory size={14} /></button>
-                          </span>
-                        </div>
-                        <pre className="diff-content">{file.diff}</pre>
-                        <AnimatePresence>
-                          {activeBlame === file.path && (
-                            <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                              <div className="blame-header">Blame — {file.path}</div>
-                              {blameData.map((line) => (
-                                <div key={line.line_number} className="blame-line">
-                                  <span className="blame-hash">{line.commit_hash.substring(0, 8)}</span><span className="blame-author">{line.author}</span><span className="blame-time">{line.time}</span><span className="blame-content">{line.content}</span>
-                                </div>
-                              ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                        <AnimatePresence>
-                          {activeTimeline === file.path && (
-                            <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                              <div className="timeline-header">文件历史 — {file.path}</div>
-                              {timelineData.map((entry) => (
-                                <div key={entry.commit_hash} className="timeline-entry">
-                                  <div className="timeline-entry-header"><span className="hash">{entry.commit_hash.substring(0, 8)}</span><span className="author">{entry.author}</span><span className="time">{entry.time}</span></div>
-                                  <div className="message">{entry.message}</div>
-                                  <pre className="diff-content" style={{ marginTop: 8 }}>{entry.diff}</pre>
-                                </div>
-                              ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>无法加载详情</div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           {showHealth && healthReport && (
             <motion.div id="panel-health" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
@@ -640,7 +672,162 @@ function App() {
         { id: 'timemachine', label: '时间机器', action: () => setShowTimeMachine(true) },
         { id: 'uimanager', label: 'UI 管理', action: () => setShowUIManager(true) },
       ]} />
+
+      {/* Git Safe Directory Fix Modal */}
+      <AnimatePresence>
+        {safeDirModalPath && (
+          <div className="safe-dir-overlay">
+            <motion.div
+              className="safe-dir-modal"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              transition={{ type: "spring", duration: 0.4 }}
+            >
+              <div className="safe-dir-title">
+                <VscWarning size={24} />
+                <span>检测到 Git 安全目录错误</span>
+              </div>
+              <div className="safe-dir-body">
+                <p>由于 Git 安全策略限制，当前用户不拥有该仓库路径。此问题常见于跨操作系统（例如 Windows 与 Mac 共享目录）或目录权限变更后。</p>
+                <div className="safe-dir-path-box">
+                  {safeDirModalPath}
+                </div>
+                <p>需要执行以下 Git 命令来修复该问题：</p>
+                <div className="safe-dir-cmd-box">
+                  git config --global --add safe.directory "{safeDirModalPath}"
+                </div>
+                {safeDirFixingError && (
+                  <div style={{ color: '#ff6b6b', fontSize: 13, marginBottom: 16 }}>
+                    修复失败: {safeDirFixingError}
+                  </div>
+                )}
+              </div>
+              <div className="safe-dir-footer">
+                <button
+                  className="safe-dir-btn safe-dir-btn-secondary"
+                  onClick={() => setSafeDirModalPath(null)}
+                  disabled={safeDirFixing}
+                >
+                  取消
+                </button>
+                <button
+                  className="safe-dir-btn safe-dir-btn-primary"
+                  onClick={handleFixSafeDirectory}
+                  disabled={safeDirFixing}
+                >
+                  {safeDirFixing ? '正在修复...' : '执行修复'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </>
+  );
+}
+
+// Helper functions for diff syntax highlighting
+function renderHighlightedLine(lineText: string) {
+  const tokens: { text: string; type: string }[] = [];
+  const tokenRegex = /(\/\/.*)|(".*?"|'.*?'|`.*?`)|(\b(?:const|let|var|function|return|import|export|from|default|class|interface|type|struct|fn|pub|use|impl|async|await|if|else|for|while|match|switch|case|break|continue|true|false|null|undefined|void|string|number|boolean|any|mut|use|mod|trait|static|ref|match|self|Self)\b)|(\b\d+\b)|([a-zA-Z_]\w*)|([^\s\w]+)|(\s+)/g;
+  
+  let match;
+  while ((match = tokenRegex.exec(lineText)) !== null) {
+    const [
+      _full,
+      comment,
+      str,
+      keyword,
+      number,
+      identifier,
+      symbol,
+      whitespace
+    ] = match;
+    
+    if (comment) {
+      tokens.push({ text: comment, type: 'comment' });
+    } else if (str) {
+      tokens.push({ text: str, type: 'string' });
+    } else if (keyword) {
+      tokens.push({ text: keyword, type: 'keyword' });
+    } else if (number) {
+      tokens.push({ text: number, type: 'number' });
+    } else if (identifier) {
+      tokens.push({ text: identifier, type: 'identifier' });
+    } else if (symbol) {
+      tokens.push({ text: symbol, type: 'symbol' });
+    } else if (whitespace) {
+      tokens.push({ text: whitespace, type: 'whitespace' });
+    }
+  }
+  
+  if (tokens.length === 0) {
+    return <span>{lineText}</span>;
+  }
+  
+  return (
+    <>
+      {tokens.map((token, index) => {
+        let className = '';
+        if (token.type === 'comment') className = 'diff-syntax-comment';
+        else if (token.type === 'string') className = 'diff-syntax-string';
+        else if (token.type === 'keyword') className = 'diff-syntax-keyword';
+        else if (token.type === 'number') className = 'diff-syntax-number';
+        else if (token.type === 'symbol') className = 'diff-syntax-symbol';
+        
+        return className ? (
+          <span key={index} className={className}>{token.text}</span>
+        ) : (
+          token.text
+        );
+      })}
+    </>
+  );
+}
+
+function parseAndRenderDiff(diffText: string) {
+  if (!diffText) return null;
+  const lines = diffText.split('\n');
+  return (
+    <div className="diff-container">
+      {lines.map((line, index) => {
+        if (index === lines.length - 1 && line === '') return null;
+        
+        if (line.startsWith('+')) {
+          const code = line.substring(1);
+          return (
+            <div key={index} className="diff-line diff-line-addition">
+              <span className="diff-line-prefix">+</span>
+              <span className="diff-line-code">{renderHighlightedLine(code)}</span>
+            </div>
+          );
+        } else if (line.startsWith('-')) {
+          const code = line.substring(1);
+          return (
+            <div key={index} className="diff-line diff-line-deletion">
+              <span className="diff-line-prefix">-</span>
+              <span className="diff-line-code">{renderHighlightedLine(code)}</span>
+            </div>
+          );
+        } else if (line.startsWith('@@')) {
+          return (
+            <div key={index} className="diff-line diff-line-hunk">
+              <span className="diff-line-prefix"> </span>
+              <span className="diff-line-code">{line}</span>
+            </div>
+          );
+        } else {
+          const code = line.startsWith(' ') ? line.substring(1) : line;
+          return (
+            <div key={index} className="diff-line diff-line-context">
+              <span className="diff-line-prefix"> </span>
+              <span className="diff-line-code">{renderHighlightedLine(code)}</span>
+            </div>
+          );
+        }
+      })}
+    </div>
   );
 }
 

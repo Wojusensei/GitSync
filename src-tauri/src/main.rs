@@ -143,9 +143,19 @@ fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDetail, 
             let mut diff_content = Vec::new();
 
             p.print(&mut |_delta, _hunk, line| {
-                match line.origin() {
-                    '+' => add += 1,
-                    '-' => del += 1,
+                let origin = line.origin();
+                match origin {
+                    '+' => {
+                        add += 1;
+                        diff_content.push(b'+');
+                    }
+                    '-' => {
+                        del += 1;
+                        diff_content.push(b'-');
+                    }
+                    ' ' => {
+                        diff_content.push(b' ');
+                    }
                     _ => {}
                 }
                 diff_content.extend_from_slice(line.content());
@@ -1740,6 +1750,25 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
 // ====================
 
 #[tauri::command]
+fn add_safe_directory(path: String) -> Result<String, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let output = std::process::Command::new("git")
+        .arg("config")
+        .arg("--global")
+        .arg("--add")
+        .arg("safe.directory")
+        .arg(&expanded)
+        .output()
+        .map_err(|e| format!("执行 git 命令失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    Ok("成功添加安全目录".into())
+}
+
+#[tauri::command]
 fn pick_background_image() -> Result<String, String> {
     use std::process::Command;
     let output = Command::new("osascript")
@@ -1800,7 +1829,8 @@ fn main() {
             get_time_machine_snapshot,
             get_file_content_at_commit,
             pick_background_image,
-            git_query
+            git_query,
+            add_safe_directory
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");

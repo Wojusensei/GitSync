@@ -25,7 +25,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   const [playSpeed, setPlaySpeed] = useState(1);
   const [minTime, setMinTime] = useState(0);
   const [maxTime, setMaxTime] = useState(Math.floor(Date.now() / 1000));
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     const loadTimeRange = async () => {
