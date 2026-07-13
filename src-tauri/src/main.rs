@@ -4,6 +4,7 @@ use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Serialize, Clone)]
 struct Commit {
@@ -957,11 +958,18 @@ fn get_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
     Ok(remotes)
 }
 
-#[derive(Serialize)]
-struct DiffDetail {
-    old_content: String,
-    new_content: String,
-    hunks: Vec<DiffHunk>,
+#[derive(Serialize, Clone)]
+struct InlineChange {
+    offset: usize,
+    length: usize,
+    kind: String,
+}
+
+#[derive(Serialize, Clone)]
+struct DiffLine {
+    origin: String,
+    content: String,
+    inline_changes: Vec<InlineChange>,
 }
 
 #[derive(Serialize)]
@@ -973,10 +981,47 @@ struct DiffHunk {
     lines: Vec<DiffLine>,
 }
 
-#[derive(Serialize, Clone)]
-struct DiffLine {
-    origin: String,
-    content: String,
+#[derive(Serialize)]
+struct DiffDetail {
+    old_content: String,
+    new_content: String,
+    hunks: Vec<DiffHunk>,
+}
+
+// 修正后的 inline changes 计算函数
+fn compute_inline_changes(old_line: &str, new_line: &str) -> Vec<InlineChange> {
+    use similar::TextDiff;
+    let mut changes = Vec::new();
+    // 按字符分词比较
+    let diff = TextDiff::from_words(old_line, new_line);
+    let mut offset = 0;
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            similar::ChangeTag::Equal => {
+                let text = change.as_str().unwrap_or("");
+                offset += text.len();
+            }
+            similar::ChangeTag::Delete => {
+                let text = change.as_str().unwrap_or("");
+                changes.push(InlineChange {
+                    offset,
+                    length: text.len(),
+                    kind: "delete".to_string(),
+                });
+                // 删除不增加 offset，因为它是删除的字符，在结果中不占位
+            }
+            similar::ChangeTag::Insert => {
+                let text = change.as_str().unwrap_or("");
+                changes.push(InlineChange {
+                    offset,
+                    length: text.len(),
+                    kind: "insert".to_string(),
+                });
+                offset += text.len();
+            }
+        }
+    }
+    changes
 }
 
 #[tauri::command]
@@ -1024,14 +1069,24 @@ fn get_diff_detail(path: String, commit_hash: String) -> Result<Vec<(String, Dif
                     current_old_start = os;
                     current_new_start = ns;
                 } else {
+                    let origin = match line.origin() {
+                        '+' => "+",
+                        '-' => "-",
+                        ' ' => " ",
+                        _ => "?",
+                    };
+                    let content = String::from_utf8_lossy(line.content()).to_string();
+                    let inline_changes = if origin == "+" || origin == "-" {
+                        let old_line = if origin == "+" { "" } else { &content };
+                        let new_line = if origin == "+" { &content } else { "" };
+                        compute_inline_changes(old_line, new_line)
+                    } else {
+                        vec![]
+                    };
                     current_lines.push(DiffLine {
-                        origin: match line.origin() {
-                            '+' => "+".into(),
-                            '-' => "-".into(),
-                            ' ' => " ".into(),
-                            _ => "?".into(),
-                        },
-                        content: String::from_utf8_lossy(line.content()).to_string(),
+                        origin: origin.to_string(),
+                        content: content.clone(),
+                        inline_changes,
                     });
                 }
                 true
@@ -1272,7 +1327,6 @@ struct FileChangeRow {
     deletions: usize,
 }
 
-// 收集某个仓库的所有提交和文件变更记录
 fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow>), String> {
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
@@ -1312,10 +1366,9 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
                 let file_path = delta.new_file().path()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let (additions, deletions) = if let Ok(Some(patch)) = git2::Patch::from_diff(&diff, 0) {
+                let (additions, deletions) = if let Ok(Some(_patch)) = git2::Patch::from_diff(&diff, 0) {
                     let mut add = 0;
                     let mut del = 0;
-                    // 简化：对整个 patch 遍历统计
                     if let Ok(_) = diff.foreach(
                         &mut |_, _| true,
                         None,
@@ -1353,7 +1406,6 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
     Ok((commits, files))
 }
 
-// 解析聚合函数，返回 (函数名, 列名)
 fn parse_aggregate(expr: &str) -> Option<(String, String)> {
     let expr = expr.trim();
     let upper = expr.to_uppercase();
@@ -1369,7 +1421,6 @@ fn parse_aggregate(expr: &str) -> Option<(String, String)> {
     None
 }
 
-// 匹配 WHERE 条件
 fn match_filter(val: &str, op: &str, target: &str) -> bool {
     match op {
         "=" => val.to_lowercase() == target.to_lowercase(),
@@ -1390,7 +1441,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
 
     let (commits, file_changes) = collect_all_data(&repo)?;
 
-    // 解析 SQL
     let sql_upper = sql.to_uppercase();
     let select_idx = sql_upper.find("SELECT").ok_or("SQL 语法错误: 缺少 SELECT")?;
     let from_idx = sql_upper.find("FROM").ok_or("SQL 语法错误: 缺少 FROM")?;
@@ -1400,12 +1450,11 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
     let order_idx = sql_upper.find("ORDER BY");
     let limit_idx = sql_upper.find("LIMIT");
 
-    // 表名
     let from_end = join_idx.unwrap_or(where_idx.unwrap_or(group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())))));
     let from_part = &sql[from_idx + 4..from_end].trim().to_lowercase();
-    let mut main_table = from_part.as_str();
+    let main_table = from_part.as_str();
     let mut join_table: Option<&str> = None;
-    let mut join_condition: Option<(String, String)> = None; // (left, right)
+    let mut join_condition: Option<(String, String)> = None;
 
     if let Some(ji) = join_idx {
         let join_end = where_idx.unwrap_or(group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()))));
@@ -1424,7 +1473,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // 验证表名
     let valid_tables = ["commits", "file_changes"];
     if !valid_tables.contains(&main_table) {
         return Err(format!("表 \"{}\" 不存在，可用表: commits, file_changes", main_table));
@@ -1435,10 +1483,9 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // SELECT 列
     let select_part = &sql[select_idx + 6..from_idx].trim();
     let mut columns: Vec<String> = Vec::new();
-    let mut aggregates: Vec<Option<(String, String)>> = Vec::new(); // 每个列对应的聚合函数
+    let mut aggregates: Vec<Option<(String, String)>> = Vec::new();
 
     if *select_part == "*" {
         if main_table == "commits" {
@@ -1449,7 +1496,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
     } else {
         for col_expr in select_part.split(',') {
             let col_expr = col_expr.trim();
-            // 检查是否有 AS 别名
             let (col_name, alias) = if let Some(as_idx) = col_expr.to_uppercase().find(" AS ") {
                 let name_part = col_expr[..as_idx].trim().to_lowercase();
                 let alias_part = col_expr[as_idx + 4..].trim();
@@ -1468,8 +1514,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // WHERE 条件
-    let mut filters: Vec<(String, String, String)> = Vec::new(); // (column, op, value)
+    let mut filters: Vec<(String, String, String)> = Vec::new();
     if let Some(wi) = where_idx {
         let where_end = group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())));
         let where_part = &sql[wi + 5..where_end].trim();
@@ -1498,7 +1543,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // 过滤主表数据
     let filtered_commits: Vec<&Commit> = if main_table == "commits" {
         commits.iter().filter(|c| {
             filters.iter().all(|(col, op, val)| {
@@ -1515,7 +1559,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         vec![]
     };
 
-    // JOIN 逻辑
     let mut joined_rows: Vec<HashMap<String, String>> = Vec::new();
     if let (Some(_jt), Some((left, right))) = (join_table, &join_condition) {
         let left = left.replace("commits.", "").replace("file_changes.", "");
@@ -1550,7 +1593,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // GROUP BY 和聚合
     let group_col = if let Some(gi) = group_idx {
         let group_end = order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()));
         Some(sql[gi + 8..group_end].trim().to_lowercase())
@@ -1609,7 +1651,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // ORDER BY
     if let Some(oi) = order_idx {
         let order_end = limit_idx.unwrap_or(sql.len());
         let order_part = &sql[oi + 8..order_end].trim();
@@ -1624,7 +1665,6 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    // LIMIT
     if let Some(li) = limit_idx {
         let limit_part = &sql[li + 5..].trim();
         if let Ok(limit) = limit_part.parse::<usize>() {
@@ -1735,33 +1775,37 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
     })
 }
 
-// ====================
-// 文件选择，自定义背景图
-// ====================
+#[tauri::command]
+async fn pick_background_image(app: tauri::AppHandle) -> Result<String, String> {
+    let file_path = app.dialog().file()
+        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
+        .blocking_pick_file();
+    match file_path {
+        Some(path) => {
+            let p = path.as_path().ok_or("路径无效")?;
+            let data = std::fs::read(p).map_err(|e| format!("读取文件失败: {}", e))?;
+            use base64::{Engine as _, engine::general_purpose::STANDARD};
+            Ok(STANDARD.encode(&data))
+        }
+        None => Err("用户取消了选择".into()),
+    }
+}
 
 #[tauri::command]
-fn pick_background_image() -> Result<String, String> {
-    use std::process::Command;
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(r#"set filePath to POSIX path of (choose file of type {"public.image"} with prompt "选择背景图片")"#)
-        .output()
-        .map_err(|e| format!("无法打开文件选择器: {}", e))?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() {
-            return Err("未选择文件".into());
+async fn open_folder_dialog(app: tauri::AppHandle) -> Result<String, String> {
+    let folder_path = app.dialog().file().blocking_pick_folder();
+    match folder_path {
+        Some(path) => {
+            let p = path.as_path().ok_or("路径无效")?;
+            Ok(p.to_string_lossy().to_string())
         }
-        let data = std::fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        Ok(STANDARD.encode(&data))
-    } else {
-        Err("用户取消了选择".into())
+        None => Err("用户取消了选择".into()),
     }
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_commits,
             get_branches,
@@ -1800,6 +1844,7 @@ fn main() {
             get_time_machine_snapshot,
             get_file_content_at_commit,
             pick_background_image,
+            open_folder_dialog,
             git_query
         ])
         .run(tauri::generate_context!())

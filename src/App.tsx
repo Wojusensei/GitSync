@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
+import { Virtuoso } from 'react-virtuoso';
 import { SiGit } from 'react-icons/si';
-import { VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory, VscChevronRight } from 'react-icons/vsc';
+import { VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory, VscChevronRight, VscFolderOpened } from 'react-icons/vsc';
 import './App.css';
 
 import SemanticSearch from './components/SemanticSearch';
@@ -131,10 +132,12 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const { ripples, createRipple } = useRipple();
 
-  const [order, setOrder] = useState<number[]>([]);
-  const dragConstraintRef = useRef<HTMLDivElement>(null);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalCommits, setTotalCommits] = useState(0);
+  const PAGE_SIZE = 30;
+
   const mainRef = useRef<HTMLDivElement>(null);
-  const [scrollY, setScrollY] = useState(0);
 
   const pointerX = useMotionValue(window.innerWidth / 2);
   const pointerY = useMotionValue(window.innerHeight / 2);
@@ -146,14 +149,12 @@ function App() {
   const [activeTimeline, setActiveTimeline] = useState<string | null>(null);
   const [timelineData, setTimelineData] = useState<FileTimelineEntry[]>([]);
 
-  // UI 状态（全局生效，不会因为切换面板而重置）
   const [bgOpacity, setBgOpacity] = useState(() => Number(localStorage.getItem('bg_opacity') || '0.9'));
   const [bgBase64, setBgBase64] = useState(() => localStorage.getItem('bg_base64') || DEFAULT_BG_BASE64);
   const [panelMode, setPanelMode] = useState<'stack' | 'replace'>(() => (localStorage.getItem('panel_mode') as 'stack' | 'replace') || 'stack');
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const [torchSize, setTorchSize] = useState(() => Number(localStorage.getItem('torch_size') || '100'));
 
-  // 面板显隐状态
   const [showHealth, setShowHealth] = useState(false);
   const [showContributors, setShowContributors] = useState(false);
   const [showHotFiles, setShowHotFiles] = useState(false);
@@ -178,7 +179,6 @@ function App() {
   const [showTimeMachine, setShowTimeMachine] = useState(false);
   const [showUIManager, setShowUIManager] = useState(false);
 
-  // 侧边栏折叠
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     history: false,
     trace: false,
@@ -191,17 +191,14 @@ function App() {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // 自动滚动状态
   const [scrollToPanelId, setScrollToPanelId] = useState<string | null>(null);
 
-  // 数据状态
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [hotFiles, setHotFiles] = useState<HotFile[]>([]);
   const [stashList, setStashList] = useState<StashEntry[]>([]);
   const [_rebaseOps, setRebaseOps] = useState<RebaseOperation[]>([]);
 
-  // 替换模式：关闭所有面板
   const closeAllPanels = () => {
     setShowHealth(false); setShowContributors(false); setShowHotFiles(false);
     setShowStash(false); setShowRebase(false); setShowGraph(false);
@@ -213,86 +210,69 @@ function App() {
     setShowTimeMachine(false); setShowUIManager(false);
   };
 
-  useEffect(() => {
-    setOrder(commits.map((_, i) => i));
-  }, [commits]);
-
-  const handleDragEnd = (fromIndex: number, info: { offset: { x: number; y: number } }) => {
-    const moveY = info.offset.y;
-    const newOrder = [...order];
-    const toIndex = Math.round(fromIndex + moveY / 60);
-    if (toIndex >= 0 && toIndex < order.length && toIndex !== fromIndex) {
-      const temp = newOrder[fromIndex];
-      newOrder.splice(fromIndex, 1);
-      newOrder.splice(toIndex, 0, temp);
-      setOrder(newOrder);
-    }
-  };
-
-  useEffect(() => {
-    const handleMouse = (e: MouseEvent) => { pointerX.set(e.clientX); pointerY.set(e.clientY); };
-    const handleScroll = () => { if (mainRef.current) setScrollY(mainRef.current.scrollTop); };
-    window.addEventListener('mousemove', handleMouse);
-    const mainEl = mainRef.current;
-    if (mainEl) mainEl.addEventListener('scroll', handleScroll);
-    return () => {
-      window.removeEventListener('mousemove', handleMouse);
-      if (mainEl) mainEl.removeEventListener('scroll', handleScroll);
-    };
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
-    document.documentElement.style.setProperty('--torch-radius', `${torchSize}px`);
-  }, [torchSize]);
-
-  useEffect(() => {
-    if (scrollToPanelId) {
-      const timer = setTimeout(() => {
-        const el = document.getElementById(scrollToPanelId);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        setScrollToPanelId(null);
-      }, 200);
-      return () => clearTimeout(timer);
-    }
-  }, [scrollToPanelId]);
-
-  const loadRepo = async () => {
+  const loadCommitsPage = useCallback(async (pageNum: number, reset: boolean) => {
     if (!repoPath.trim()) return;
+    if (!reset && !hasMore) return;
     setLoading(true);
     setError('');
     try {
-      const [commitResult, branchResult] = await Promise.all([
-        invoke<Commit[]>('get_commits', { path: repoPath }),
+      const [branchResult] = await Promise.all([
         invoke<Branch[]>('get_branches', { path: repoPath }),
       ]);
-      setCommits(commitResult);
       setBranches(branchResult);
-      setSelectedCommit(null);
-      setCommitDetail(null);
       const headBranch = branchResult.find(b => b.is_head);
       if (headBranch) setActiveBranch(headBranch.name);
+
+      const result = await invoke<[Commit[], number]>('get_commits_paginated', {
+        path: repoPath,
+        page: pageNum,
+        page_size: PAGE_SIZE
+      });
+      const [pageData, total] = result;
+      setTotalCommits(total);
+      if (reset) {
+        setCommits(pageData);
+      } else {
+        setCommits(prev => [...prev, ...pageData]);
+      }
+      setHasMore((pageNum + 1) * PAGE_SIZE < total);
+      setPage(pageNum);
     } catch (e: any) {
       setError(e);
-      setCommits([]);
-      setBranches([]);
+      if (reset) { setCommits([]); }
     } finally { setLoading(false); }
-  };
+  }, [repoPath, hasMore]);
+
+  const loadRepo = useCallback(async () => {
+    if (!repoPath.trim()) return;
+    setPage(0);
+    setHasMore(true);
+    setCommits([]);
+    setSelectedCommit(null);
+    setCommitDetail(null);
+    await loadCommitsPage(0, true);
+  }, [repoPath, loadCommitsPage]);
+
+  const loadMore = useCallback(() => {
+    if (!loading && hasMore) {
+      loadCommitsPage(page + 1, false);
+    }
+  }, [loading, hasMore, page, loadCommitsPage]);
+
+  useEffect(() => {
+    if (repoPath) {
+      loadRepo();
+    }
+  }, []);
 
   const switchBranch = async (branchName: string) => {
     setActiveBranch(branchName);
-    setLoading(true);
-    try {
-      const result = await invoke<Commit[]>('get_commits', { path: repoPath });
-      setCommits(result);
-      setSelectedCommit(null);
-      setCommitDetail(null);
-    } catch (e: any) { setError(e); } finally { setLoading(false); }
+    setPage(0);
+    setHasMore(true);
+    setCommits([]);
+    setSelectedCommit(null);
+    setCommitDetail(null);
+    await loadCommitsPage(0, true);
   };
 
   const handleCommitClick = async (hash: string) => {
@@ -314,6 +294,8 @@ function App() {
       setCommits(result);
       setSelectedCommit(null);
       setCommitDetail(null);
+      setHasMore(false);
+      setTotalCommits(result.length);
     } catch (e: any) { setError(e); } finally { setLoading(false); }
   };
 
@@ -344,6 +326,45 @@ function App() {
   const loadStashList = async () => { try { const res = await invoke<StashEntry[]>('stash_list', { path: repoPath }); setStashList(res); if (panelMode === 'replace') closeAllPanels(); setShowStash(true); } catch (e: any) { setError(e); } };
   const loadRebaseCommits = async () => { try { const res = await invoke<RebaseCommit[]>('get_rebase_commits', { path: repoPath, count: 20 }); setRebaseOps(res.map(c => ({ hash: c.hash, action: 'pick' }))); if (panelMode === 'replace') closeAllPanels(); setShowRebase(true); } catch (e: any) { setError(e); } };
 
+  const openFolder = async () => {
+    try {
+      const path = await invoke<string>('open_folder_dialog');
+      if (path) {
+        setRepoPath(path);
+        setTimeout(() => loadRepo(), 100);
+      }
+    } catch (e: any) {
+      setError(e);
+    }
+  };
+
+  useEffect(() => {
+    const handleMouse = (e: MouseEvent) => { pointerX.set(e.clientX); pointerY.set(e.clientY); };
+    window.addEventListener('mousemove', handleMouse);
+    return () => window.removeEventListener('mousemove', handleMouse);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--torch-radius', `${torchSize}px`);
+  }, [torchSize]);
+
+  useEffect(() => {
+    if (scrollToPanelId) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(scrollToPanelId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        setScrollToPanelId(null);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToPanelId]);
+
   const renderSectionHeader = (title: string, section: string) => (
     <div className="section-header" onClick={() => toggleSection(section)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', cursor: 'pointer', userSelect: 'none' }}>
       <motion.span animate={{ rotate: expandedSections[section] ? 90 : 0 }} transition={{ duration: 0.2 }} style={{ display: 'inline-flex' }}>
@@ -351,6 +372,28 @@ function App() {
       </motion.span>
       <span className="section-title" style={{ marginBottom: 0 }}>{title}</span>
     </div>
+  );
+
+  const CommitItem = ({ commit, index }: { commit: Commit; index: number }) => (
+    <motion.div
+      key={commit.hash}
+      className={`commit-item ${selectedCommit === commit.hash ? 'selected' : ''}`}
+      onClick={() => handleCommitClick(commit.hash)}
+      onMouseMove={handleMouseMove}
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(index * 0.01, 0.3), duration: 0.2 }}
+      whileHover={{ scale: 1.01, boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}
+      style={{ position: 'relative' }}
+    >
+      <div className="torch-glow" />
+      <div className="commit-header">
+        <span className="hash">{commit.hash.substring(0, 8)}</span>
+        <span className="author">{commit.author}</span>
+        <span className="time">{commit.time}</span>
+      </div>
+      <div className="message">{commit.message}</div>
+    </motion.div>
   );
 
   return (
@@ -366,6 +409,13 @@ function App() {
       <div className="app">
         <header className="topbar">
           <h1><SiGit size={22} color="#5B9BD5" /> GitSync</h1>
+          <button
+            onClick={openFolder}
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '7px 10px', color: '#c8d6e5', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            title="打开文件夹"
+          >
+            <VscFolderOpened size={18} />
+          </button>
           <input className="path-input" type="text" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="输入仓库路径..." onKeyDown={(e) => e.key === 'Enter' && loadRepo()} />
           <div style={{ display: 'flex', gap: 8, flex: 1 }}>
             <input className="path-input" type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索提交..." onKeyDown={(e) => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
@@ -467,23 +517,47 @@ function App() {
 
         <main className="main" ref={mainRef} style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', scrollBehavior: 'smooth' }}>
           {error && (<motion.div className="error" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>{error}</motion.div>)}
-          {commits.length > 0 && (<div className="status-bar"><span className="status-dot" /><VscGitCommit size={14} />{commits.length} 个提交</div>)}
+          {commits.length > 0 && (
+            <div className="status-bar">
+              <span className="status-dot" />
+              <VscGitCommit size={14} />
+              {commits.length} / {totalCommits} 个提交
+              {loading && ' (加载中...)'}
+            </div>
+          )}
           {commits.length === 0 && !error && !loading && (<div className="empty-state"><VscEmptyWindow size={48} /><p style={{ marginTop: 12 }}>输入仓库路径并加载，查看提交历史</p></div>)}
-          <div className="commit-list">
-            <AnimatePresence>
-              {order.map((index) => {
-                const c = commits[index];
-                if (!c) return null;
-                return (
-                  <motion.div key={c.hash} className={`commit-item ${selectedCommit === c.hash ? 'selected' : ''}`} onClick={() => handleCommitClick(c.hash)} onMouseMove={handleMouseMove} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ delay: index * 0.02, duration: 0.3, type: 'spring', stiffness: 120 }} drag="y" dragConstraints={dragConstraintRef} dragElastic={0.2} onDragEnd={(_, info) => handleDragEnd(index, info)} whileHover={{ scale: 1.03, boxShadow: '0 16px 40px rgba(0,0,0,0.6)', rotateX: 1, rotateY: -1 }} whileTap={{ scale: 0.97 }} style={{ position: 'relative', transformStyle: 'preserve-3d' }}>
-                    <div className="torch-glow" />
-                    <div className="commit-header"><span className="hash">{c.hash.substring(0, 8)}</span><span className="author">{c.author}</span><span className="time">{c.time}</span></div>
-                    <div className="message">{c.message}</div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
+
+          {commits.length > 0 && (
+            <div className="commit-list">
+              <Virtuoso
+                style={{ height: Math.min(commits.length * 60, 600), minHeight: 200 }}
+                totalCount={commits.length}
+                endReached={loadMore}
+                itemContent={(index) => {
+                  const commit = commits[index];
+                  if (!commit) return null;
+                  return <CommitItem commit={commit} index={index} />;
+                }}
+                components={{
+                  Footer: () => (
+                    loading ? (
+                      <div style={{ textAlign: 'center', padding: '16px', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+                        加载更多...
+                      </div>
+                    ) : hasMore ? (
+                      <div style={{ textAlign: 'center', padding: '8px', color: 'rgba(255,255,255,0.2)', fontSize: 12 }}>
+                        滚动加载更多
+                      </div>
+                    ) : commits.length > 0 ? (
+                      <div style={{ textAlign: 'center', padding: '16px', color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>
+                        已加载全部 {totalCommits} 个提交
+                      </div>
+                    ) : null
+                  )
+                }}
+              />
+            </div>
+          )}
 
           <AnimatePresence>
             {selectedCommit && (
