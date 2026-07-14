@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
+import { invokeTauri } from '../services/tauriService';
 
 export default function DiffViewer({ repoPath }: { repoPath: string }) {
   const [commitA, setCommitA] = useState('');
@@ -11,7 +11,7 @@ export default function DiffViewer({ repoPath }: { repoPath: string }) {
   const handleCompare = async () => {
     setLoading(true);
     try {
-      const res: any = await invoke('compare_commits', { path: repoPath, commitA, commitB });
+      const res: any = await invokeTauri('compare_commits', { path: repoPath, commitA, commitB });
       setDiff(res.diff);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }

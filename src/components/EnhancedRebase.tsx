@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion, Reorder } from 'framer-motion';
+import { invokeTauri } from '../services/tauriService';
 
 interface RebaseCommit {
   hash: string;
@@ -22,7 +22,7 @@ export default function EnhancedRebase({ repoPath, onComplete }: { repoPath: str
 
   const load = async () => {
     try {
-      const res = await invoke<RebaseCommit[]>('get_rebase_commits', { path: repoPath, count: 20 });
+      const res = await invokeTauri<RebaseCommit[]>('get_rebase_commits', { path: repoPath, count: 20 });
       setOps(res.map(c => ({ hash: c.hash, action: 'pick' })));
     } catch (e) { console.error(e); }
   };
@@ -30,7 +30,7 @@ export default function EnhancedRebase({ repoPath, onComplete }: { repoPath: str
   const execute = async () => {
     setLoading(true);
     try {
-      await invoke('execute_rebase', { path: repoPath, operations: ops });
+      await invokeTauri('execute_rebase', { path: repoPath, operations: ops });
       onComplete();
     } catch (e) { console.error(e); }
     finally { setLoading(false); }

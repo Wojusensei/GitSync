@@ -1,6 +1,6 @@
 [package]
 name = "git-tool"
-version = "0.3.0"
+version = "0.3.1"
 description = "GitSync - Git Repository Browser & SQL Analysis Tool"
 authors = ["you"]
 edition = "2021"

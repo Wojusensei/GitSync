@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
+import { invokeTauri } from '../services/tauriService';
 
 interface TimeMachineFile {
   path: string;
@@ -30,7 +30,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   useEffect(() => {
     const loadTimeRange = async () => {
       try {
-        const commits: any[] = await invoke('get_commits', { path: repoPath });
+        const commits: any[] = await invokeTauri('get_commits', { path: repoPath });
         if (commits.length > 0) {
           const times = commits.map((c: any) => new Date(c.time).getTime() / 1000);
           setMinTime(Math.min(...times));
@@ -44,7 +44,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
 
   const loadSnapshot = async (ts: number) => {
     try {
-      const res: TimeMachineSnapshot = await invoke('get_time_machine_snapshot', { path: repoPath, timestamp: ts });
+      const res: TimeMachineSnapshot = await invokeTauri('get_time_machine_snapshot', { path: repoPath, timestamp: ts });
       setSnapshot(res);
     } catch (e) { console.error(e); }
   };
@@ -85,7 +85,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
     if (!snapshot) return;
     setSelectedFile(filePath);
     try {
-      const content: string = await invoke('get_file_content_at_commit', {
+      const content: string = await invokeTauri('get_file_content_at_commit', {
         path: repoPath,
         commitHash: snapshot.commit_hash,
         filePath,

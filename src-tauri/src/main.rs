@@ -149,6 +149,8 @@ fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDetail, 
                     '-' => del += 1,
                     _ => {}
                 }
+                // 添加行前缀（+, -, 或空格）以便前端正确识别增删行
+                diff_content.push(line.origin() as u8);
                 diff_content.extend_from_slice(line.content());
                 true
             })
@@ -612,6 +614,7 @@ struct RebaseCommit {
 struct RebaseOperation {
     hash: String,
     action: String,
+    #[allow(dead_code)]
     new_message: Option<String>,
 }
 
@@ -964,7 +967,6 @@ struct InlineChange {
     length: usize,
     kind: String,
 }
-
 #[derive(Serialize, Clone)]
 struct DiffLine {
     origin: String,
@@ -987,7 +989,6 @@ struct DiffDetail {
     new_content: String,
     hunks: Vec<DiffHunk>,
 }
-
 // 修正后的 inline changes 计算函数
 fn compute_inline_changes(old_line: &str, new_line: &str) -> Vec<InlineChange> {
     use similar::TextDiff;
@@ -1126,6 +1127,9 @@ fn get_commits_paginated(path: String, page: usize, page_size: usize) -> Result<
     let all = get_commits(path)?;
     let total = all.len();
     let start = page * page_size;
+    if start >= total {
+        return Ok((vec![], total));
+    }
     let end = (start + page_size).min(total);
     let page_data = all[start..end].to_vec();
     Ok((page_data, total))
@@ -1184,8 +1188,6 @@ fn get_conflict_detail(path: String) -> Result<Vec<ConflictDetail>, String> {
                 let file_path = entry.path().unwrap_or("未知").to_string();
                 let full_path = format!("{}/{}", expanded, file_path);
                 if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    let mut ours = String::new();
-                    let mut theirs = String::new();
                     let mut merged = String::new();
                     let mut blocks = Vec::new();
                     let mut in_ours = false;
@@ -1222,8 +1224,8 @@ fn get_conflict_detail(path: String) -> Result<Vec<ConflictDetail>, String> {
                         }
                     }
                     
-                    ours = blocks.iter().map(|b| b.ours_text.as_str()).collect::<Vec<&str>>().join("\n");
-                    theirs = blocks.iter().map(|b| b.theirs_text.as_str()).collect::<Vec<&str>>().join("\n");
+                    let ours = blocks.iter().map(|b| b.ours_text.as_str()).collect::<Vec<&str>>().join("\n");
+                    let theirs = blocks.iter().map(|b| b.theirs_text.as_str()).collect::<Vec<&str>>().join("\n");
                     
                     conflict_files.push(ConflictDetail {
                         path: file_path,
@@ -1327,6 +1329,7 @@ struct FileChangeRow {
     deletions: usize,
 }
 
+// 收集某个仓库的所有提交和文件变更记录
 fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow>), String> {
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
@@ -1369,6 +1372,7 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
                 let (additions, deletions) = if let Ok(Some(_patch)) = git2::Patch::from_diff(&diff, 0) {
                     let mut add = 0;
                     let mut del = 0;
+                    // 简化：对整个 patch 遍历统计
                     if let Ok(_) = diff.foreach(
                         &mut |_, _| true,
                         None,
@@ -1406,6 +1410,7 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
     Ok((commits, files))
 }
 
+// 解析聚合函数，返回 (函数名, 列名)
 fn parse_aggregate(expr: &str) -> Option<(String, String)> {
     let expr = expr.trim();
     let upper = expr.to_uppercase();
@@ -1421,6 +1426,7 @@ fn parse_aggregate(expr: &str) -> Option<(String, String)> {
     None
 }
 
+// 匹配 WHERE 条件
 fn match_filter(val: &str, op: &str, target: &str) -> bool {
     match op {
         "=" => val.to_lowercase() == target.to_lowercase(),
@@ -1441,6 +1447,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
 
     let (commits, file_changes) = collect_all_data(&repo)?;
 
+    // 解析 SQL
     let sql_upper = sql.to_uppercase();
     let select_idx = sql_upper.find("SELECT").ok_or("SQL 语法错误: 缺少 SELECT")?;
     let from_idx = sql_upper.find("FROM").ok_or("SQL 语法错误: 缺少 FROM")?;
@@ -1450,11 +1457,12 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
     let order_idx = sql_upper.find("ORDER BY");
     let limit_idx = sql_upper.find("LIMIT");
 
+    // 表名
     let from_end = join_idx.unwrap_or(where_idx.unwrap_or(group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())))));
     let from_part = &sql[from_idx + 4..from_end].trim().to_lowercase();
     let main_table = from_part.as_str();
     let mut join_table: Option<&str> = None;
-    let mut join_condition: Option<(String, String)> = None;
+    let mut join_condition: Option<(String, String)> = None; // (left, right)
 
     if let Some(ji) = join_idx {
         let join_end = where_idx.unwrap_or(group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()))));
@@ -1473,6 +1481,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
+    // 验证表名
     let valid_tables = ["commits", "file_changes"];
     if !valid_tables.contains(&main_table) {
         return Err(format!("表 \"{}\" 不存在，可用表: commits, file_changes", main_table));
@@ -1483,9 +1492,10 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
+    // SELECT 列
     let select_part = &sql[select_idx + 6..from_idx].trim();
     let mut columns: Vec<String> = Vec::new();
-    let mut aggregates: Vec<Option<(String, String)>> = Vec::new();
+    let mut aggregates: Vec<Option<(String, String)>> = Vec::new(); // 每个列对应的聚合函数
 
     if *select_part == "*" {
         if main_table == "commits" {
@@ -1496,6 +1506,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
     } else {
         for col_expr in select_part.split(',') {
             let col_expr = col_expr.trim();
+            // 检查是否有 AS 别名
             let (col_name, alias) = if let Some(as_idx) = col_expr.to_uppercase().find(" AS ") {
                 let name_part = col_expr[..as_idx].trim().to_lowercase();
                 let alias_part = col_expr[as_idx + 4..].trim();
@@ -1514,7 +1525,8 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
-    let mut filters: Vec<(String, String, String)> = Vec::new();
+    // WHERE 条件
+    let mut filters: Vec<(String, String, String)> = Vec::new(); // (column, op, value)
     if let Some(wi) = where_idx {
         let where_end = group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())));
         let where_part = &sql[wi + 5..where_end].trim();
@@ -1543,6 +1555,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
+    // 过滤主表数据
     let filtered_commits: Vec<&Commit> = if main_table == "commits" {
         commits.iter().filter(|c| {
             filters.iter().all(|(col, op, val)| {
@@ -1559,6 +1572,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         vec![]
     };
 
+    // JOIN 逻辑
     let mut joined_rows: Vec<HashMap<String, String>> = Vec::new();
     if let (Some(_jt), Some((left, right))) = (join_table, &join_condition) {
         let left = left.replace("commits.", "").replace("file_changes.", "");
@@ -1593,6 +1607,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
+    // GROUP BY 和聚合
     let group_col = if let Some(gi) = group_idx {
         let group_end = order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()));
         Some(sql[gi + 8..group_end].trim().to_lowercase())
@@ -1651,6 +1666,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
+    // ORDER BY
     if let Some(oi) = order_idx {
         let order_end = limit_idx.unwrap_or(sql.len());
         let order_part = &sql[oi + 8..order_end].trim();
@@ -1665,6 +1681,7 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
         }
     }
 
+    // LIMIT
     if let Some(li) = limit_idx {
         let limit_part = &sql[li + 5..].trim();
         if let Ok(limit) = limit_part.parse::<usize>() {
@@ -1776,6 +1793,25 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
 }
 
 #[tauri::command]
+fn add_safe_directory(path: String) -> Result<String, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let output = std::process::Command::new("git")
+        .arg("config")
+        .arg("--global")
+        .arg("--add")
+        .arg("safe.directory")
+        .arg(&expanded)
+        .output()
+        .map_err(|e| format!("执行 git 命令失败: {}", e))?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    Ok("成功添加安全目录".into())
+}
+
+#[tauri::command]
 async fn pick_background_image(app: tauri::AppHandle) -> Result<String, String> {
     let file_path = app.dialog().file()
         .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
@@ -1845,7 +1881,8 @@ fn main() {
             get_file_content_at_commit,
             pick_background_image,
             open_folder_dialog,
-            git_query
+            git_query,
+            add_safe_directory
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");
