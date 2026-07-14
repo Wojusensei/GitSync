@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
+import { invokeTauri } from '../services/tauriService';
 
 export default function HookManager({ repoPath }: { repoPath: string }) {
   const [hooks, setHooks] = useState<string[]>([]);
@@ -11,7 +11,7 @@ export default function HookManager({ repoPath }: { repoPath: string }) {
   const loadHooks = async () => {
     setError('');
     try {
-      const res = await invoke<string[]>('get_hooks', { path: repoPath });
+      const res = await invokeTauri<string[]>('get_hooks', { path: repoPath });
       setHooks(res);
     } catch (e: any) {
       setError(String(e));
@@ -21,7 +21,7 @@ export default function HookManager({ repoPath }: { repoPath: string }) {
   const loadContent = async (name: string) => {
     setError('');
     try {
-      const res = await invoke<string>('get_hook_content', { path: repoPath, hookName: name });
+      const res = await invokeTauri<string>('get_hook_content', { path: repoPath, hookName: name });
       setSelectedHook(name);
       setContent(res);
     } catch (e: any) {
@@ -32,7 +32,7 @@ export default function HookManager({ repoPath }: { repoPath: string }) {
   const saveContent = async () => {
     setError('');
     try {
-      await invoke('save_hook_content', { path: repoPath, hookName: selectedHook, content });
+      await invokeTauri('save_hook_content', { path: repoPath, hookName: selectedHook, content });
       alert('保存成功');
     } catch (e: any) {
       setError(String(e));

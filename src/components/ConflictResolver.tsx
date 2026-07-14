@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
+import { invokeTauri } from '../services/tauriService';
 
 interface ConflictBlock {
   ours_text: string;
@@ -24,7 +24,7 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
   const load = async () => {
     setError('');
     try {
-      const res = await invoke<ConflictDetail[]>('get_conflict_detail', { path: repoPath });
+      const res = await invokeTauri<ConflictDetail[]>('get_conflict_detail', { path: repoPath });
       setFiles(res);
       if (res.length > 0) {
         setActiveFile(res[0]);
@@ -72,7 +72,7 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
     if (!activeFile) return;
     setError('');
     try {
-      await invoke('resolve_conflict', { path: repoPath, filePath: activeFile.path, resolution: buildResolution() });
+      await invokeTauri('resolve_conflict', { path: repoPath, filePath: activeFile.path, resolution: buildResolution() });
       setFiles(files.filter(f => f.path !== activeFile.path));
       if (files.length > 1) {
         const remaining = files.filter(f => f.path !== activeFile.path);

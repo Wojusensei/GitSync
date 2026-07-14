@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
+import { invokeTauri } from '../services/tauriService';
 
 interface TagInfo {
   name: string;
@@ -13,11 +13,11 @@ export default function TagManager({ repoPath }: { repoPath: string }) {
   const [newHash, setNewHash] = useState('');
 
   const loadTags = async () => {
-    setTags(await invoke<TagInfo[]>('get_tags', { path: repoPath }));
+    setTags(await invokeTauri<TagInfo[]>('get_tags', { path: repoPath }));
   };
 
   const createTag = async () => {
-    await invoke('create_tag', { path: repoPath, name: newName, commitHash: newHash });
+    await invokeTauri('create_tag', { path: repoPath, name: newName, commitHash: newHash });
     loadTags();
     setNewName('');
     setNewHash('');

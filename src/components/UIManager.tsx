@@ -26,7 +26,6 @@ export default function UIManager({
 }: UIManagerProps) {
   const [customBgError, setCustomBgError] = useState('');
   const [bgPreview, setBgPreview] = useState<string | null>(null);
-
   const themes = [
     { id: 'dark', label: '深色', bg: '#0a0a14' },
     { id: 'light', label: '浅色', bg: '#f0f0f0' },
@@ -100,6 +99,7 @@ export default function UIManager({
           }}
           style={{ width: '100%', accentColor: '#5B9BD5' }}
         />
+
       </div>
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
@@ -150,105 +150,109 @@ export default function UIManager({
             />
           </div>
         </div>
-        {customBgError && <div style={{ color: '#ff6b6b', fontSize: 12, marginTop: 6 }}>{customBgError}</div>}
+        {customBgError && (
+          <div style={{ marginTop: 10, color: '#ff6b6b', fontSize: 12 }}>
+            {customBgError}
+          </div>
+        )}
       </div>
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <VscColorMode size={14} style={{ color: '#8899aa' }} />
-          <span className="section-title" style={{ marginBottom: 0 }}>主题</span>
+            <span className="section-title" style={{ marginBottom: 0 }}>主题</span>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {themes.map(t => (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setTheme(t.id);
+                  localStorage.setItem('theme', t.id);
+                  document.documentElement.setAttribute('data-theme', t.id);
+                }}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    background: t.bg,
+                    border: theme === t.id ? '2px solid #5B9BD5' : '2px solid rgba(255,255,255,0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'border 0.2s',
+                  }}
+                >
+                  {theme === t.id && <VscCheck size={16} style={{ color: t.id === 'dark' ? '#5B9BD5' : '#333' }} />}
+                </div>
+                <span style={{ fontSize: 10, color: '#8899aa' }}>{t.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {themes.map(t => (
+
+        <div className="analysis-section" style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <VscLayout size={14} style={{ color: '#8899aa' }} />
+            <span className="section-title" style={{ marginBottom: 0 }}>面板模式</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <span style={{ fontSize: 13, color: '#c8d6e5' }}>
+              {panelMode === 'stack' ? '叠加模式' : '替换模式'}
+            </span>
             <button
-              key={t.id}
               onClick={() => {
-                setTheme(t.id);
-                localStorage.setItem('theme', t.id);
-                document.documentElement.setAttribute('data-theme', t.id);
+                const next = panelMode === 'stack' ? 'replace' : 'stack';
+                setPanelMode(next);
+                localStorage.setItem('panel_mode', next);
               }}
               style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 4,
-                background: 'transparent',
+                position: 'relative',
+                width: 44,
+                height: 24,
+                borderRadius: 12,
+                background: panelMode === 'stack' ? '#5B9BD5' : 'rgba(255,255,255,0.15)',
                 border: 'none',
                 cursor: 'pointer',
-                padding: 0,
+                transition: 'background 0.25s',
+                flexShrink: 0,
               }}
             >
               <div
                 style={{
-                  width: 36,
-                  height: 36,
+                  position: 'absolute',
+                  top: 2,
+                  left: panelMode === 'stack' ? 22 : 2,
+                  width: 20,
+                  height: 20,
                   borderRadius: '50%',
-                  background: t.bg,
-                  border: theme === t.id ? '2px solid #5B9BD5' : '2px solid rgba(255,255,255,0.15)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'border 0.2s',
+                  background: '#fff',
+                  transition: 'left 0.25s',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
                 }}
-              >
-                {theme === t.id && <VscCheck size={16} style={{ color: t.id === 'dark' ? '#5B9BD5' : '#333' }} />}
-              </div>
-              <span style={{ fontSize: 10, color: '#8899aa' }}>{t.label}</span>
+              />
             </button>
-          ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#8899aa', marginTop: 6, lineHeight: 1.5 }}>
+            {panelMode === 'replace'
+              ? '替换模式：点击新功能时自动关闭之前的面板，只显示当前选中项'
+              : '叠加模式：多个面板可同时展开，新面板出现时自动滚动到视图'}
+          </div>
         </div>
-      </div>
 
-      <div className="analysis-section" style={{ marginTop: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <VscLayout size={14} style={{ color: '#8899aa' }} />
-          <span className="section-title" style={{ marginBottom: 0 }}>面板模式</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ fontSize: 13, color: '#c8d6e5' }}>
-            {panelMode === 'stack' ? '叠加模式' : '替换模式'}
-          </span>
-          <button
-            onClick={() => {
-              const next = panelMode === 'stack' ? 'replace' : 'stack';
-              setPanelMode(next);
-              localStorage.setItem('panel_mode', next);
-            }}
-            style={{
-              position: 'relative',
-              width: 44,
-              height: 24,
-              borderRadius: 12,
-              background: panelMode === 'stack' ? '#5B9BD5' : 'rgba(255,255,255,0.15)',
-              border: 'none',
-              cursor: 'pointer',
-              transition: 'background 0.25s',
-              flexShrink: 0,
-            }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                top: 2,
-                left: panelMode === 'stack' ? 22 : 2,
-                width: 20,
-                height: 20,
-                borderRadius: '50%',
-                background: '#fff',
-                transition: 'left 0.25s',
-                boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-              }}
-            />
-          </button>
-        </div>
-        <div style={{ fontSize: 11, color: '#8899aa', marginTop: 6, lineHeight: 1.5 }}>
-          {panelMode === 'replace'
-            ? '替换模式：点击新功能时自动关闭之前的面板，只显示当前选中项'
-            : '叠加模式：多个面板可同时展开，新面板出现时自动滚动到视图'}
-        </div>
-      </div>
-
-      <style>{`
+        <style>{`
         :root[data-theme='light'] { --bg: #f0f0f0; --text: #222; }
         :root[data-theme='soft'] { --bg: #e6e2d9; --text: #333; }
         :root[data-theme='dark'] { --bg: #0a0a14; --text: #c8d6e5; }
