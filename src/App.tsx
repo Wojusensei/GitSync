@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
+import { Virtuoso } from 'react-virtuoso';
 import { SiGit } from 'react-icons/si';
-import { VscWarning, VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory, VscChevronRight } from 'react-icons/vsc';
+import { VscRepoForked, VscGitCommit, VscSourceControl, VscEmptyWindow, VscDiffAdded, VscDiffRemoved, VscSearch, VscFileCode, VscHistory, VscChevronRight, VscFolderOpened } from 'react-icons/vsc';
 import './App.css';
 
 import SemanticSearch from './components/SemanticSearch';
@@ -131,8 +132,11 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const { ripples, createRipple } = useRipple();
 
-  const [order, setOrder] = useState<number[]>([]);
-  const dragConstraintRef = useRef<HTMLDivElement>(null);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalCommits, setTotalCommits] = useState(0);
+  const PAGE_SIZE = 30;
+
   const mainRef = useRef<HTMLDivElement>(null);
 
   const pointerX = useMotionValue(window.innerWidth / 2);
@@ -140,53 +144,17 @@ function App() {
   const springX = useSpring(pointerX, { stiffness: 200, damping: 30 });
   const springY = useSpring(pointerY, { stiffness: 200, damping: 30 });
 
-  // Safe directory state
-  const [safeDirModalPath, setSafeDirModalPath] = useState<string | null>(null);
-  const [safeDirFixing, setSafeDirFixing] = useState(false);
-  const [safeDirFixingError, setSafeDirFixingError] = useState<string | null>(null);
-
-  // File changes browsing state
-  const [currentFileIndex, setCurrentFileIndex] = useState(0);
-  const [viewMode, setViewMode] = useState<'single' | 'list'>('single');
-
-  useEffect(() => {
-    if (error && error.includes("is not owned by current user")) {
-      const match = error.match(/repository path '([^']+)' is not owned by current user/);
-      if (match) {
-        setSafeDirModalPath(match[1]);
-      }
-    }
-  }, [error]);
-
-  const handleFixSafeDirectory = async () => {
-    if (!safeDirModalPath) return;
-    setSafeDirFixing(true);
-    setSafeDirFixingError(null);
-    try {
-      await invoke('add_safe_directory', { path: safeDirModalPath });
-      setSafeDirModalPath(null);
-      setError('');
-      loadRepo();
-    } catch (e: any) {
-      setSafeDirFixingError(String(e));
-    } finally {
-      setSafeDirFixing(false);
-    }
-  };
-
   const [activeBlame, setActiveBlame] = useState<string | null>(null);
   const [blameData, setBlameData] = useState<BlameLine[]>([]);
   const [activeTimeline, setActiveTimeline] = useState<string | null>(null);
   const [timelineData, setTimelineData] = useState<FileTimelineEntry[]>([]);
 
-  // UI 状态（全局生效，不会因为切换面板而重置）
   const [bgOpacity, setBgOpacity] = useState(() => Number(localStorage.getItem('bg_opacity') || '0.9'));
   const [bgBase64, setBgBase64] = useState(() => localStorage.getItem('bg_base64') || DEFAULT_BG_BASE64);
   const [panelMode, setPanelMode] = useState<'stack' | 'replace'>(() => (localStorage.getItem('panel_mode') as 'stack' | 'replace') || 'stack');
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const [torchSize, setTorchSize] = useState(() => Number(localStorage.getItem('torch_size') || '100'));
 
-  // 面板显隐状态
   const [showHealth, setShowHealth] = useState(false);
   const [showContributors, setShowContributors] = useState(false);
   const [showHotFiles, setShowHotFiles] = useState(false);
@@ -211,7 +179,6 @@ function App() {
   const [showTimeMachine, setShowTimeMachine] = useState(false);
   const [showUIManager, setShowUIManager] = useState(false);
 
-  // 侧边栏折叠
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     history: false,
     trace: false,
@@ -224,17 +191,14 @@ function App() {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
-  // 自动滚动状态
   const [scrollToPanelId, setScrollToPanelId] = useState<string | null>(null);
 
-  // 数据状态
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [hotFiles, setHotFiles] = useState<HotFile[]>([]);
   const [stashList, setStashList] = useState<StashEntry[]>([]);
   const [_rebaseOps, setRebaseOps] = useState<RebaseOperation[]>([]);
 
-  // 替换模式：关闭所有面板
   const closeAllPanels = () => {
     setShowHealth(false); setShowContributors(false); setShowHotFiles(false);
     setShowStash(false); setShowRebase(false); setShowGraph(false);
@@ -246,88 +210,74 @@ function App() {
     setShowTimeMachine(false); setShowUIManager(false);
   };
 
-  useEffect(() => {
-    setOrder(commits.map((_, i) => i));
-  }, [commits]);
-
-  const handleDragEnd = (fromIndex: number, info: { offset: { x: number; y: number } }) => {
-    const moveY = info.offset.y;
-    const newOrder = [...order];
-    const toIndex = Math.round(fromIndex + moveY / 60);
-    if (toIndex >= 0 && toIndex < order.length && toIndex !== fromIndex) {
-      const temp = newOrder[fromIndex];
-      newOrder.splice(fromIndex, 1);
-      newOrder.splice(toIndex, 0, temp);
-      setOrder(newOrder);
-    }
-  };
-
-  useEffect(() => {
-    const handleMouse = (e: MouseEvent) => { pointerX.set(e.clientX); pointerY.set(e.clientY); };
-    window.addEventListener('mousemove', handleMouse);
-    return () => {
-      window.removeEventListener('mousemove', handleMouse);
-    };
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
-
-  useEffect(() => {
-    document.documentElement.style.setProperty('--torch-radius', `${torchSize}px`);
-  }, [torchSize]);
-
-  useEffect(() => {
-    if (scrollToPanelId) {
-      const timer = setTimeout(() => {
-        const el = document.getElementById(scrollToPanelId);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        setScrollToPanelId(null);
-      }, 200);
-      return () => clearTimeout(timer);
-    }
-  }, [scrollToPanelId]);
-
-  const loadRepo = async () => {
+  const loadCommitsPage = useCallback(async (pageNum: number, reset: boolean) => {
     if (!repoPath.trim()) return;
+    if (!reset && !hasMore) return;
     setLoading(true);
     setError('');
     try {
-      const [commitResult, branchResult] = await Promise.all([
-        invoke<Commit[]>('get_commits', { path: repoPath }),
+      const [branchResult] = await Promise.all([
         invoke<Branch[]>('get_branches', { path: repoPath }),
       ]);
-      setCommits(commitResult);
       setBranches(branchResult);
-      setSelectedCommit(null);
-      setCommitDetail(null);
       const headBranch = branchResult.find(b => b.is_head);
       if (headBranch) setActiveBranch(headBranch.name);
+
+      const result = await invoke<[Commit[], number]>('get_commits_paginated', {
+        path: repoPath,
+        page: pageNum,
+        pageSize: PAGE_SIZE
+      });
+      const [pageData, total] = result;
+      setTotalCommits(total);
+      if (reset) {
+        setCommits(pageData);
+      } else {
+        setCommits(prev => [...prev, ...pageData]);
+      }
+      setHasMore((pageNum + 1) * PAGE_SIZE < total);
+      setPage(pageNum);
     } catch (e: any) {
       setError(e);
-      setCommits([]);
-      setBranches([]);
+      if (reset) { setCommits([]); }
     } finally { setLoading(false); }
-  };
+  }, [repoPath, hasMore]);
+
+  const loadRepo = useCallback(async () => {
+    if (!repoPath.trim()) return;
+    setPage(0);
+    setHasMore(true);
+    setCommits([]);
+    setSelectedCommit(null);
+    setCommitDetail(null);
+    await loadCommitsPage(0, true);
+  }, [repoPath, loadCommitsPage]);
+
+  const loadMore = useCallback(() => {
+    if (!loading && hasMore) {
+      loadCommitsPage(page + 1, false);
+    }
+  }, [loading, hasMore, page, loadCommitsPage]);
+
+  useEffect(() => {
+    if (repoPath) {
+      loadRepo();
+    }
+  }, []);
 
   const switchBranch = async (branchName: string) => {
     setActiveBranch(branchName);
-    setLoading(true);
-    try {
-      const result = await invoke<Commit[]>('get_commits', { path: repoPath });
-      setCommits(result);
-      setSelectedCommit(null);
-      setCommitDetail(null);
-    } catch (e: any) { setError(e); } finally { setLoading(false); }
+    setPage(0);
+    setHasMore(true);
+    setCommits([]);
+    setSelectedCommit(null);
+    setCommitDetail(null);
+    await loadCommitsPage(0, true);
   };
 
   const handleCommitClick = async (hash: string) => {
     if (selectedCommit === hash) { setSelectedCommit(null); setCommitDetail(null); return; }
     setSelectedCommit(hash);
-    setCurrentFileIndex(0);
     setDetailLoading(true);
     try {
       const detail = await invoke<CommitDetail>('get_commit_detail', { path: repoPath, commitHash: hash });
@@ -344,6 +294,8 @@ function App() {
       setCommits(result);
       setSelectedCommit(null);
       setCommitDetail(null);
+      setHasMore(false);
+      setTotalCommits(result.length);
     } catch (e: any) { setError(e); } finally { setLoading(false); }
   };
 
@@ -374,6 +326,45 @@ function App() {
   const loadStashList = async () => { try { const res = await invoke<StashEntry[]>('stash_list', { path: repoPath }); setStashList(res); if (panelMode === 'replace') closeAllPanels(); setShowStash(true); } catch (e: any) { setError(e); } };
   const loadRebaseCommits = async () => { try { const res = await invoke<RebaseCommit[]>('get_rebase_commits', { path: repoPath, count: 20 }); setRebaseOps(res.map(c => ({ hash: c.hash, action: 'pick' }))); if (panelMode === 'replace') closeAllPanels(); setShowRebase(true); } catch (e: any) { setError(e); } };
 
+  const openFolder = async () => {
+    try {
+      const path = await invoke<string>('open_folder_dialog');
+      if (path) {
+        setRepoPath(path);
+        setTimeout(() => loadRepo(), 100);
+      }
+    } catch (e: any) {
+      setError(e);
+    }
+  };
+
+  useEffect(() => {
+    const handleMouse = (e: MouseEvent) => { pointerX.set(e.clientX); pointerY.set(e.clientY); };
+    window.addEventListener('mousemove', handleMouse);
+    return () => window.removeEventListener('mousemove', handleMouse);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--torch-radius', `${torchSize}px`);
+  }, [torchSize]);
+
+  useEffect(() => {
+    if (scrollToPanelId) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(scrollToPanelId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        setScrollToPanelId(null);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToPanelId]);
+
   const renderSectionHeader = (title: string, section: string) => (
     <div className="section-header" onClick={() => toggleSection(section)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', cursor: 'pointer', userSelect: 'none' }}>
       <motion.span animate={{ rotate: expandedSections[section] ? 90 : 0 }} transition={{ duration: 0.2 }} style={{ display: 'inline-flex' }}>
@@ -381,6 +372,28 @@ function App() {
       </motion.span>
       <span className="section-title" style={{ marginBottom: 0 }}>{title}</span>
     </div>
+  );
+
+  const CommitItem = ({ commit, index }: { commit: Commit; index: number }) => (
+    <motion.div
+      key={commit.hash}
+      className={`commit-item ${selectedCommit === commit.hash ? 'selected' : ''}`}
+      onClick={() => handleCommitClick(commit.hash)}
+      onMouseMove={handleMouseMove}
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(index * 0.01, 0.3), duration: 0.2 }}
+      whileHover={{ scale: 1.01, boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}
+      style={{ position: 'relative' }}
+    >
+      <div className="torch-glow" />
+      <div className="commit-header">
+        <span className="hash">{commit.hash.substring(0, 8)}</span>
+        <span className="author">{commit.author}</span>
+        <span className="time">{commit.time}</span>
+      </div>
+      <div className="message">{commit.message}</div>
+    </motion.div>
   );
 
   return (
@@ -396,6 +409,13 @@ function App() {
       <div className="app">
         <header className="topbar">
           <h1><SiGit size={22} color="#5B9BD5" /> GitSync</h1>
+          <button
+            onClick={openFolder}
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '7px 10px', color: '#c8d6e5', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            title="打开文件夹"
+          >
+            <VscFolderOpened size={18} />
+          </button>
           <input className="path-input" type="text" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="输入仓库路径..." onKeyDown={(e) => e.key === 'Enter' && loadRepo()} />
           <div style={{ display: 'flex', gap: 8, flex: 1 }}>
             <input className="path-input" type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索提交..." onKeyDown={(e) => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
@@ -497,195 +517,104 @@ function App() {
 
         <main className="main" ref={mainRef} style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', scrollBehavior: 'smooth' }}>
           {error && (<motion.div className="error" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>{error}</motion.div>)}
-          {commits.length > 0 && (<div className="status-bar"><span className="status-dot" /><VscGitCommit size={14} />{commits.length} 个提交</div>)}
+          {commits.length > 0 && (
+            <div className="status-bar">
+              <span className="status-dot" />
+              <VscGitCommit size={14} />
+              {commits.length} / {totalCommits} 个提交
+              {loading && ' (加载中...)'}
+            </div>
+          )}
           {commits.length === 0 && !error && !loading && (<div className="empty-state"><VscEmptyWindow size={48} /><p style={{ marginTop: 12 }}>输入仓库路径并加载，查看提交历史</p></div>)}
-          <div className="commit-list">
-            <AnimatePresence>
-              {order.map((index) => {
-                const c = commits[index];
-                if (!c) return null;
-                const isSelected = selectedCommit === c.hash;
-                return (
-                  <div key={c.hash} style={{ display: 'flex', flexDirection: 'column' }}>
-                    <motion.div
-                      className={`commit-item ${isSelected ? 'selected' : ''}`}
-                      onClick={() => handleCommitClick(c.hash)}
-                      onMouseMove={handleMouseMove}
-                      initial={index < 20 ? { opacity: 0, x: -20 } : undefined}
-                      animate={index < 20 ? { opacity: 1, x: 0 } : undefined}
-                      exit={index < 20 ? { opacity: 0, x: 20 } : undefined}
-                      transition={index < 20 ? { delay: Math.min(index * 0.004, 0.12), duration: 0.25, type: 'spring', stiffness: 150 } : undefined}
-                      drag="y"
-                      dragConstraints={dragConstraintRef}
-                      dragElastic={0.2}
-                      onDragEnd={(_, info) => handleDragEnd(index, info)}
-                      whileHover={{ scale: 1.02, boxShadow: '0 12px 30px rgba(0,0,0,0.5)', rotateX: 1, rotateY: -1 }}
-                      whileTap={{ scale: 0.98 }}
-                      style={{ position: 'relative', transformStyle: 'preserve-3d' }}
-                    >
-                      <div className="torch-glow" />
-                      <div className="commit-header"><span className="hash">{c.hash.substring(0, 8)}</span><span className="author">{c.author}</span><span className="time">{c.time}</span></div>
-                      <div className="message">{c.message}</div>
-                    </motion.div>
 
-                    <AnimatePresence>
-                      {isSelected && (
-                        <motion.div className="commit-detail" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3, type: 'spring', stiffness: 120 }} style={{ marginTop: 8, marginBottom: 16, overflow: 'hidden' }}>
-                          {detailLoading ? (
-                            <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>加载详情中...</div>
-                          ) : commitDetail ? (
-                            <div>
-                              {/* Header controls for browsing mode */}
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                                <div style={{ fontSize: 14, color: '#dfe6e9', fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
-                                {commitDetail.files.length > 1 && (
-                                  <div style={{ display: 'flex', gap: 8 }}>
-                                    <button
-                                      className={`btn ${viewMode === 'single' ? 'btn-blue' : ''}`}
-                                      style={{ padding: '4px 10px', fontSize: 12 }}
-                                      onClick={() => setViewMode('single')}
-                                    >
-                                      单文件滑动
-                                    </button>
-                                    <button
-                                      className={`btn ${viewMode === 'list' ? 'btn-blue' : ''}`}
-                                      style={{ padding: '4px 10px', fontSize: 12 }}
-                                      onClick={() => setViewMode('list')}
-                                    >
-                                      列表视图
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
+          {commits.length > 0 && (
+            <div className="commit-list">
+              <Virtuoso
+                style={{ height: Math.min(commits.length * 60, 600), minHeight: 200 }}
+                totalCount={commits.length}
+                endReached={loadMore}
+                itemContent={(index) => {
+                  const commit = commits[index];
+                  if (!commit) return null;
+                  return <CommitItem commit={commit} index={index} />;
+                }}
+                components={{
+                  Footer: () => (
+                    loading ? (
+                      <div style={{ textAlign: 'center', padding: '16px', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+                        加载更多...
+                      </div>
+                    ) : hasMore ? (
+                      <div style={{ textAlign: 'center', padding: '8px', color: 'rgba(255,255,255,0.2)', fontSize: 12 }}>
+                        滚动加载更多
+                      </div>
+                    ) : commits.length > 0 ? (
+                      <div style={{ textAlign: 'center', padding: '16px', color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>
+                        已加载全部 {totalCommits} 个提交
+                      </div>
+                    ) : null
+                  )
+                }}
+              />
+            </div>
+          )}
 
-                              {/* Draggable Progress Bar / Range Input for browsing files */}
-                              {viewMode === 'single' && commitDetail.files.length > 1 && (
-                                <div className="file-changes-slider-container" style={{ margin: '12px 0 20px 0', padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8, color: '#dfe6e9' }}>
-                                    <span>拖拽进度浏览: <strong>{currentFileIndex + 1}</strong> / {commitDetail.files.length}</span>
-                                    <span style={{ color: '#5B9BD5', fontWeight: 600 }}>{commitDetail.files[currentFileIndex]?.path}</span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min={0}
-                                    max={commitDetail.files.length - 1}
-                                    value={currentFileIndex}
-                                    onChange={(e) => setCurrentFileIndex(Number(e.target.value))}
-                                    style={{ width: '100%', cursor: 'pointer' }}
-                                  />
+          <AnimatePresence>
+            {selectedCommit && (
+              <motion.div className="commit-detail" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3, type: 'spring', stiffness: 120 }} style={{ marginTop: 16, overflow: 'hidden' }}>
+                {detailLoading ? (
+                  <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>加载详情中...</div>
+                ) : commitDetail ? (
+                  <div>
+                    <div style={{ fontSize: 14, color: '#dfe6e9', marginBottom: 12, fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
+                    {commitDetail.files.map((file) => (
+                      <div key={file.path} className="detail-file">
+                        <div className="detail-file-header">
+                          <span className={`file-status file-status-${file.status}`}>{file.status}</span>
+                          <span className="file-path">{file.path}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', gap: 8 }}>
+                            <span style={{ color: '#4fc1ff' }}><VscDiffAdded size={12} /> {file.additions}</span>
+                            <span style={{ color: '#ff6b6b' }}><VscDiffRemoved size={12} /> {file.deletions}</span>
+                            <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleBlame(file.path); }} title="查看 Blame"><VscFileCode size={14} /></button>
+                            <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleTimeline(file.path); }} title="文件时间线"><VscHistory size={14} /></button>
+                          </span>
+                        </div>
+                        <pre className="diff-content">{file.diff}</pre>
+                        <AnimatePresence>
+                          {activeBlame === file.path && (
+                            <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                              <div className="blame-header">Blame — {file.path}</div>
+                              {blameData.map((line) => (
+                                <div key={line.line_number} className="blame-line">
+                                  <span className="blame-hash">{line.commit_hash.substring(0, 8)}</span><span className="blame-author">{line.author}</span><span className="blame-time">{line.time}</span><span className="blame-content">{line.content}</span>
                                 </div>
-                              )}
-
-                              {/* Rendering files changes */}
-                              {viewMode === 'single' ? (
-                                (() => {
-                                  const file = commitDetail.files[currentFileIndex] || commitDetail.files[0];
-                                  if (!file) return null;
-                                  return (
-                                    <div key={file.path} className="detail-file">
-                                      <div className="detail-file-header">
-                                        <span className={`file-status file-status-${file.status}`}>{file.status}</span>
-                                        <span className="file-path">{file.path}</span>
-                                        <span style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', gap: 8 }}>
-                                          <span style={{ color: '#4fc1ff' }}><VscDiffAdded size={12} /> {file.additions}</span>
-                                          <span style={{ color: '#ff6b6b' }}><VscDiffRemoved size={12} /> {file.deletions}</span>
-                                          <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleBlame(file.path); }} title="查看 Blame"><VscFileCode size={14} /></button>
-                                          <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleTimeline(file.path); }} title="文件时间线"><VscHistory size={14} /></button>
-                                        </span>
-                                      </div>
-                                      
-                                      {/* Code Syntax Highlighted Diff */}
-                                      {parseAndRenderDiff(file.diff)}
-
-                                      <AnimatePresence>
-                                        {activeBlame === file.path && (
-                                          <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                                            <div className="blame-header">Blame — {file.path}</div>
-                                            {blameData.map((line) => (
-                                              <div key={line.line_number} className="blame-line">
-                                                <span className="blame-hash">{line.commit_hash.substring(0, 8)}</span><span className="blame-author">{line.author}</span><span className="blame-time">{line.time}</span><span className="blame-content">{line.content}</span>
-                                              </div>
-                                            ))}
-                                          </motion.div>
-                                        )}
-                                      </AnimatePresence>
-                                      <AnimatePresence>
-                                        {activeTimeline === file.path && (
-                                          <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                                            <div className="timeline-header">文件历史 — {file.path}</div>
-                                            {timelineData.map((entry) => (
-                                              <div key={entry.commit_hash} className="timeline-entry">
-                                                <div className="timeline-entry-header"><span className="hash">{entry.commit_hash.substring(0, 8)}</span><span className="author">{entry.author}</span><span className="time">{entry.time}</span></div>
-                                                <div className="message">{entry.message}</div>
-                                                {/* Code Syntax Highlighted Diff */}
-                                                {parseAndRenderDiff(entry.diff)}
-                                              </div>
-                                            ))}
-                                          </motion.div>
-                                        )}
-                                      </AnimatePresence>
-                                    </div>
-                                  );
-                                })()
-                              ) : (
-                                commitDetail.files.map((file) => (
-                                  <div key={file.path} className="detail-file">
-                                    <div className="detail-file-header">
-                                      <span className={`file-status file-status-${file.status}`}>{file.status}</span>
-                                      <span className="file-path">{file.path}</span>
-                                      <span style={{ marginLeft: 'auto', fontSize: 12, display: 'flex', gap: 8 }}>
-                                        <span style={{ color: '#4fc1ff' }}><VscDiffAdded size={12} /> {file.additions}</span>
-                                        <span style={{ color: '#ff6b6b' }}><VscDiffRemoved size={12} /> {file.deletions}</span>
-                                        <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleBlame(file.path); }} title="查看 Blame"><VscFileCode size={14} /></button>
-                                        <button className="detail-action-btn" onClick={(e) => { e.stopPropagation(); handleTimeline(file.path); }} title="文件时间线"><VscHistory size={14} /></button>
-                                      </span>
-                                    </div>
-                                    
-                                    {/* Code Syntax Highlighted Diff */}
-                                    {parseAndRenderDiff(file.diff)}
-
-                                    <AnimatePresence>
-                                      {activeBlame === file.path && (
-                                        <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                                          <div className="blame-header">Blame — {file.path}</div>
-                                          {blameData.map((line) => (
-                                            <div key={line.line_number} className="blame-line">
-                                              <span className="blame-hash">{line.commit_hash.substring(0, 8)}</span><span className="blame-author">{line.author}</span><span className="blame-time">{line.time}</span><span className="blame-content">{line.content}</span>
-                                            </div>
-                                          ))}
-                                        </motion.div>
-                                      )}
-                                    </AnimatePresence>
-                                    <AnimatePresence>
-                                      {activeTimeline === file.path && (
-                                        <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-                                          <div className="timeline-header">文件历史 — {file.path}</div>
-                                          {timelineData.map((entry) => (
-                                            <div key={entry.commit_hash} className="timeline-entry">
-                                              <div className="timeline-entry-header"><span className="hash">{entry.commit_hash.substring(0, 8)}</span><span className="author">{entry.author}</span><span className="time">{entry.time}</span></div>
-                                              <div className="message">{entry.message}</div>
-                                              {/* Code Syntax Highlighted Diff */}
-                                              {parseAndRenderDiff(entry.diff)}
-                                            </div>
-                                          ))}
-                                        </motion.div>
-                                      )}
-                                    </AnimatePresence>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          ) : (
-                            <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>无法加载详情</div>
+                              ))}
+                            </motion.div>
                           )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                        </AnimatePresence>
+                        <AnimatePresence>
+                          {activeTimeline === file.path && (
+                            <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                              <div className="timeline-header">文件历史 — {file.path}</div>
+                              {timelineData.map((entry) => (
+                                <div key={entry.commit_hash} className="timeline-entry">
+                                  <div className="timeline-entry-header"><span className="hash">{entry.commit_hash.substring(0, 8)}</span><span className="author">{entry.author}</span><span className="time">{entry.time}</span></div>
+                                  <div className="message">{entry.message}</div>
+                                  <pre className="diff-content" style={{ marginTop: 8 }}>{entry.diff}</pre>
+                                </div>
+                              ))}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
+                ) : (
+                  <div style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: 20 }}>无法加载详情</div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {showHealth && healthReport && (
             <motion.div id="panel-health" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
@@ -785,162 +714,7 @@ function App() {
         { id: 'timemachine', label: '时间机器', action: () => setShowTimeMachine(true) },
         { id: 'uimanager', label: 'UI 管理', action: () => setShowUIManager(true) },
       ]} />
-
-      {/* Git Safe Directory Fix Modal */}
-      <AnimatePresence>
-        {safeDirModalPath && (
-          <div className="safe-dir-overlay">
-            <motion.div
-              className="safe-dir-modal"
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              transition={{ type: "spring", duration: 0.4 }}
-            >
-              <div className="safe-dir-title">
-                <VscWarning size={24} />
-                <span>检测到 Git 安全目录错误</span>
-              </div>
-              <div className="safe-dir-body">
-                <p>由于 Git 安全策略限制，当前用户不拥有该仓库路径。此问题常见于跨操作系统（例如 Windows 与 Mac 共享目录）或目录权限变更后。</p>
-                <div className="safe-dir-path-box">
-                  {safeDirModalPath}
-                </div>
-                <p>需要执行以下 Git 命令来修复该问题：</p>
-                <div className="safe-dir-cmd-box">
-                  git config --global --add safe.directory "{safeDirModalPath}"
-                </div>
-                {safeDirFixingError && (
-                  <div style={{ color: '#ff6b6b', fontSize: 13, marginBottom: 16 }}>
-                    修复失败: {safeDirFixingError}
-                  </div>
-                )}
-              </div>
-              <div className="safe-dir-footer">
-                <button
-                  className="safe-dir-btn safe-dir-btn-secondary"
-                  onClick={() => setSafeDirModalPath(null)}
-                  disabled={safeDirFixing}
-                >
-                  取消
-                </button>
-                <button
-                  className="safe-dir-btn safe-dir-btn-primary"
-                  onClick={handleFixSafeDirectory}
-                  disabled={safeDirFixing}
-                >
-                  {safeDirFixing ? '正在修复...' : '执行修复'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </>
-  );
-}
-
-// Helper functions for diff syntax highlighting
-function renderHighlightedLine(lineText: string) {
-  const tokens: { text: string; type: string }[] = [];
-  const tokenRegex = /(\/\/.*)|(".*?"|'.*?'|`.*?`)|(\b(?:const|let|var|function|return|import|export|from|default|class|interface|type|struct|fn|pub|use|impl|async|await|if|else|for|while|match|switch|case|break|continue|true|false|null|undefined|void|string|number|boolean|any|mut|use|mod|trait|static|ref|match|self|Self)\b)|(\b\d+\b)|([a-zA-Z_]\w*)|([^\s\w]+)|(\s+)/g;
-  
-  let match;
-  while ((match = tokenRegex.exec(lineText)) !== null) {
-    const [
-      _full,
-      comment,
-      str,
-      keyword,
-      number,
-      identifier,
-      symbol,
-      whitespace
-    ] = match;
-    
-    if (comment) {
-      tokens.push({ text: comment, type: 'comment' });
-    } else if (str) {
-      tokens.push({ text: str, type: 'string' });
-    } else if (keyword) {
-      tokens.push({ text: keyword, type: 'keyword' });
-    } else if (number) {
-      tokens.push({ text: number, type: 'number' });
-    } else if (identifier) {
-      tokens.push({ text: identifier, type: 'identifier' });
-    } else if (symbol) {
-      tokens.push({ text: symbol, type: 'symbol' });
-    } else if (whitespace) {
-      tokens.push({ text: whitespace, type: 'whitespace' });
-    }
-  }
-  
-  if (tokens.length === 0) {
-    return <span>{lineText}</span>;
-  }
-  
-  return (
-    <>
-      {tokens.map((token, index) => {
-        let className = '';
-        if (token.type === 'comment') className = 'diff-syntax-comment';
-        else if (token.type === 'string') className = 'diff-syntax-string';
-        else if (token.type === 'keyword') className = 'diff-syntax-keyword';
-        else if (token.type === 'number') className = 'diff-syntax-number';
-        else if (token.type === 'symbol') className = 'diff-syntax-symbol';
-        
-        return className ? (
-          <span key={index} className={className}>{token.text}</span>
-        ) : (
-          token.text
-        );
-      })}
-    </>
-  );
-}
-
-function parseAndRenderDiff(diffText: string) {
-  if (!diffText) return null;
-  const lines = diffText.split('\n');
-  return (
-    <div className="diff-container">
-      {lines.map((line, index) => {
-        if (index === lines.length - 1 && line === '') return null;
-        
-        if (line.startsWith('+')) {
-          const code = line.substring(1);
-          return (
-            <div key={index} className="diff-line diff-line-addition">
-              <span className="diff-line-prefix">+</span>
-              <span className="diff-line-code">{renderHighlightedLine(code)}</span>
-            </div>
-          );
-        } else if (line.startsWith('-')) {
-          const code = line.substring(1);
-          return (
-            <div key={index} className="diff-line diff-line-deletion">
-              <span className="diff-line-prefix">-</span>
-              <span className="diff-line-code">{renderHighlightedLine(code)}</span>
-            </div>
-          );
-        } else if (line.startsWith('@@')) {
-          return (
-            <div key={index} className="diff-line diff-line-hunk">
-              <span className="diff-line-prefix"> </span>
-              <span className="diff-line-code">{line}</span>
-            </div>
-          );
-        } else {
-          const code = line.startsWith(' ') ? line.substring(1) : line;
-          return (
-            <div key={index} className="diff-line diff-line-context">
-              <span className="diff-line-prefix"> </span>
-              <span className="diff-line-code">{renderHighlightedLine(code)}</span>
-            </div>
-          );
-        }
-      })}
-    </div>
   );
 }
 
