@@ -2,7 +2,7 @@
 
 交互式 Git 历史浏览器，可视化提交图、分支、差异对比、Blame 等，帮助开发者更直观地理解和管理 Git 仓库。
 
-🌐 支持 macOS 和 Windows，基于 Rust + Tauri 构建，性能爆炸💥
+🌐 适配 macOS 和 Windows 以及大部分 Linux 的发行版 ，基于 Rust + Tauri 构建，性能爆炸💥
 
 ## ✨ 功能
 
@@ -115,7 +115,7 @@ sudo mkdir -p /opt/gitsync && sudo tar -xzvf GitSync-0.3.1-linux-x86_64.tar.gz -
 - **后端**：Rust (git2, serde, chrono, tauri-plugin-dialog)
 - **前端**：TypeScript + React + Framer Motion + react-virtuoso
 - **桌面框架**：Tauri v2
-- **跨平台构建**：macOS 原生编译，Windows 通过交叉编译生成
+- **跨平台构建**：macOS 原生编译，通过交叉编译生成其他操作系统的安装包文件
 
 ## 🤝 贡献
 
