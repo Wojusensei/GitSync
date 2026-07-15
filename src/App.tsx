@@ -16,6 +16,7 @@ import EnhancedRebase from './components/EnhancedRebase';
 import CommandPalette from './components/CommandPalette';
 import GraphView from './components/GraphView';
 import FileTree from './components/FileTree';
+import FileViewer from './components/FileViewer';
 import CommitFilter from './components/CommitFilter';
 import TagManager from './components/TagManager';
 import RemoteManager from './components/RemoteManager';
@@ -196,6 +197,7 @@ function App() {
     setCommits([]);
     setSelectedCommit(null);
     setCommitDetail(null);
+    setSelectedTreeFile(null);
     await loadCommitsPage(0, true);
   }, [repoPath, loadCommitsPage]);
 
@@ -247,6 +249,7 @@ function App() {
   const [showRebase, setShowRebase] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
   const [showFileTree, setShowFileTree] = useState(false);
+  const [selectedTreeFile, setSelectedTreeFile] = useState<string | null>(null);
   const [showCommitFilter, setShowCommitFilter] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
   const [showRemoteManager, setShowRemoteManager] = useState(false);
@@ -297,6 +300,7 @@ function App() {
     setShowExportHTML(false); setShowSemanticSearch(false); setShowDiffViewer(false);
     setShowChangelog(false); setShowScriptRunner(false); setShowQueryConsole(false);
     setShowTimeMachine(false); setShowUIManager(false);
+    setSelectedTreeFile(null);
   };
 
   const switchBranch = useCallback(async (branchName: string) => {
@@ -790,7 +794,18 @@ function App() {
           )}
 
           {showGraph && <div id="panel-graph"><GraphView repoPath={repoPath} onSelectCommit={(hash) => handleCommitClick(hash)} /></div>}
-          {showFileTree && <div id="panel-filetree"><FileTree repoPath={repoPath} onSelectFile={(path) => console.log('Selected file:', path)} /></div>}
+          {showFileTree && (
+            <div id="panel-filetree" style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap', width: '100%' }}>
+              <div style={{ flex: '1 1 300px', minWidth: 280 }}>
+                <FileTree repoPath={repoPath} onSelectFile={(path) => setSelectedTreeFile(path)} />
+              </div>
+              {selectedTreeFile && (
+                <div style={{ flex: '2 1 500px', minWidth: 320 }}>
+                  <FileViewer repoPath={repoPath} filePath={selectedTreeFile} onClose={() => setSelectedTreeFile(null)} />
+                </div>
+              )}
+            </div>
+          )}
           {showCommitFilter && <div id="panel-filter"><CommitFilter repoPath={repoPath} onFiltered={(commits) => setCommits(commits)} /></div>}
           {showTagManager && <div id="panel-tags"><TagManager repoPath={repoPath} /></div>}
           {showRemoteManager && <div id="panel-remotes"><RemoteManager repoPath={repoPath} /></div>}

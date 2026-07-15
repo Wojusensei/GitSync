@@ -3,6 +3,23 @@
 version = 4
 
 [[package]]
+name = "GitSync"
+version = "0.3.2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "git2",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "similar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1279,23 +1296,6 @@ dependencies = [
  "libc",
  "system-deps",
  "winapi",
-]
-
-[[package]]
-name = "git-tool"
-version = "0.3.1"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "git2",
- "serde",
- "serde_json",
- "shellexpand",
- "similar",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
 ]
 
 [[package]]

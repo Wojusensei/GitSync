@@ -632,3 +632,7 @@ input[type="range"]::-moz-range-thumb:hover {
   background: #79b0e2;
   box-shadow: 0 0 15px rgba(91, 155, 213, 0.9);
 }
+
+.file-view-tr:hover {
+  background: rgba(255, 255, 255, 0.05);
+}

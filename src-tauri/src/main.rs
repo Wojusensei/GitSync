@@ -1123,14 +1123,14 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
 }
 
 #[tauri::command]
-fn get_commits_paginated(path: String, page: usize, pageSize: usize) -> Result<(Vec<Commit>, usize), String> {
+fn get_commits_paginated(path: String, page: usize, page_size: usize) -> Result<(Vec<Commit>, usize), String> {
     let all = get_commits(path)?;
     let total = all.len();
-    let start = page * pageSize;
+    let start = page * page_size;
     if start >= total {
         return Ok((vec![], total));
     }
-    let end = (start + pageSize).min(total);
+    let end = (start + page_size).min(total);
     let page_data = all[start..end].to_vec();
     Ok((page_data, total))
 }
@@ -1733,6 +1733,17 @@ fn get_file_content_at_commit(path: String, commit_hash: String, file_path: Stri
 }
 
 #[tauri::command]
+fn get_file_content(path: String, file_path: String) -> Result<String, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let full_path = Path::new(&expanded).join(&file_path);
+    if !full_path.exists() {
+        return Err("文件不存在".to_string());
+    }
+    let content = std::fs::read(full_path).map_err(|e| format!("无法读取文件: {}", e))?;
+    Ok(String::from_utf8_lossy(&content).to_string())
+}
+
+#[tauri::command]
 fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachineSnapshot, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
@@ -1879,6 +1890,7 @@ fn main() {
             run_script,
             get_time_machine_snapshot,
             get_file_content_at_commit,
+            get_file_content,
             pick_background_image,
             open_folder_dialog,
             git_query,

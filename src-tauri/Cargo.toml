@@ -1,12 +1,12 @@
 [package]
-name = "git-tool"
-version = "0.3.1"
+name = "GitSync"
+version = "0.3.2"
 description = "GitSync - Git Repository Browser & SQL Analysis Tool"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "git_tool_lib"
+name = "git_sync_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
