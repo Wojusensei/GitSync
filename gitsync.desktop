@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=GitSync
-Comment=交互式 Git 历史浏览器，可视化提交图、分支、差异对比、Blame 等，帮助开发者更直观地理解和管理 Git 仓库
-Exec=gitsync
-Icon=gitsync
-Terminal=false
-Type=Application
-Categories=Development;
-StartupWMClass=git-tool
