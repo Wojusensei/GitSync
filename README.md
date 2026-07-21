@@ -123,6 +123,4 @@ sudo mkdir -p /opt/gitsync && sudo tar -xzvf GitSync-0.3.1-linux-x86_64.tar.gz -
 
 ## 📄 开源协议
 
-MIT
-
 [MIT License](https://opensource.org/licenses/MIT)
