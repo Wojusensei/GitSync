@@ -882,8 +882,9 @@ function App() {
             panelMode={panelMode} setPanelMode={setPanelMode}
             theme={theme} setTheme={setTheme}
             torchSize={torchSize} setTorchSize={setTorchSize}
-            bgStyle={bgStyle} setBgStyle={setBgStyle}   // <^+背景风格相关 props&>
-            onPickCustomBackground={handlePickBackgroundDirect}  // <^传递自定义图片选择函数&>
+            bgStyle={bgStyle} setBgStyle={setBgStyle}
+            onPickCustomBackground={handlePickBackgroundDirect}
+            bgBase64={bgBase64}
           /></div>}
         </main>
       </div>
@@ -926,7 +927,7 @@ function App() {
         )}
       </AnimatePresence>
 
-      {/* <^首次启动欢迎弹窗&> */}
+      {/* <^first open welcoming&> */}
       <WelcomeModal
         isOpen={showWelcome}
         onSelect={handleWelcomeSelect}
@@ -937,6 +938,8 @@ function App() {
           localStorage.setItem('hasSeenWelcome', 'true');
           setShowWelcome(false);
         }}
+        defaultBgBase64={DEFAULT_BG_BASE64}
+        bgBase64={bgBase64}
       />
     </>
   );
