@@ -130,7 +130,7 @@ tar -xzvf GitSync-0.3.2-linux-x86_64.tar.gz
 - **后端**：Rust (git2, serde, chrono, tauri-plugin-dialog)
 - **前端**：TypeScript + React + Framer Motion + react-virtuoso
 - **桌面框架**：Tauri v2
-- **跨平台构建**：macOS 原生编译，通过交叉编译生成其他操作系统的安装包文件
+- **跨平台构建**：macOS 原生编译，通过交叉编译以及 Github Actions 生成其他操作系统的安装包文件
 
 ## 🤝 贡献
 
