@@ -8,6 +8,7 @@ import { addSafeDirectory } from './services/tauriService';
 import FeedbackOverlay from './components/FeedbackOverlay';
 import { DEFAULT_BG_BASE64 } from './assets/defaultBg';
 import { parseAndRenderDiff } from './utils/diffUtils';
+import WelcomeModal from './components/WelcomeModal';  // <^welcome弹窗组件!thanks to @GuGulsNotAPigeon &>
 
 import SemanticSearch from './components/SemanticSearch';
 import DiffViewer from './components/DiffViewer';
@@ -234,6 +235,12 @@ function App() {
   const [activeTimeline, setActiveTimeline] = useState<string | null>(null);
   const [timelineData, setTimelineData] = useState<FileTimelineEntry[]>([]);
 
+  // <^+（preset / md / custom）=> localStorage&>
+  const [bgStyle, setBgStyle] = useState<'preset' | 'md' | 'custom'>(() => {
+    const saved = localStorage.getItem('bgStyle') as 'preset' | 'md' | 'custom' | null;
+    return saved || 'preset';
+  });
+
   // UI 状态（全局生效，不会因为切换面板而重置）
   const [bgOpacity, setBgOpacity] = useState(() => Number(localStorage.getItem('bg_opacity') || '0.9'));
   const [bgBase64, setBgBase64] = useState(() => localStorage.getItem('bg_base64') || DEFAULT_BG_BASE64);
@@ -436,13 +443,60 @@ function App() {
     </div>
   );
 
+  // <^首启检测：localStorage not have hasSeenWelcome => yes&>
+  const [showWelcome, setShowWelcome] = useState(() => {
+    return localStorage.getItem('hasSeenWelcome') !== 'true';
+  });
+
+  const handleWelcomeSelect = (style: 'preset' | 'md' | 'custom') => {
+    setBgStyle(style);
+    localStorage.setItem('bgStyle', style);
+    localStorage.setItem('hasSeenWelcome', 'true');
+    setShowWelcome(false);
+    // <^自 => 文件选择器&>
+    if (style === 'custom') {
+      // open文件选择器
+      handlePickBackgroundDirect();
+    }
+  };
+
+  // <^原handlePickBackground => 独立函数&>
+  const handlePickBackgroundDirect = async () => {
+    try {
+      const b64 = await invoke<string>('pick_background_image');
+      if (b64) {
+        setBgBase64(b64);
+        localStorage.setItem('bg_base64', b64);
+        setBgStyle('custom');
+        localStorage.setItem('bgStyle', 'custom');
+      }
+    } catch (e: any) {
+      setError(e);
+    }
+  };
+
   return (
     <>
-      <img src={`data:image/jpeg;base64,${bgBase64}`} alt="background" style={{
-        position: 'fixed', top: 0, right: 0, width: 'auto', height: '100%',
-        objectFit: 'contain', objectPosition: 'right center', zIndex: -1, pointerEvents: 'none',
-        opacity: bgOpacity
-      }} />
+      {/* <^背景渲染：根据 bgStyle 决定显示预设图片、MD纯色或自定义图片&> */}
+      {bgStyle === 'md' ? (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          width: '100%',
+          height: '100%',
+          zIndex: -1,
+          background: 'linear-gradient(145deg, #1a1a2e, #16213e, #0f3460)',
+          opacity: bgOpacity,
+          pointerEvents: 'none',
+        }} />
+      ) : (
+        <img src={`data:image/jpeg;base64,${bgBase64}`} alt="background" style={{
+          position: 'fixed', top: 0, right: 0, width: 'auto', height: '100%',
+          objectFit: 'contain', objectPosition: 'right center', zIndex: -1, pointerEvents: 'none',
+          opacity: bgOpacity
+        }} />
+      )}
       <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: -1, background: 'radial-gradient(ellipse at center, rgba(5,9,20,0.08) 0%, rgba(5,9,20,0.25) 100%)' }} />
       <motion.div className="pointer-glow" style={{ left: springX, top: springY, position: 'fixed' }} />
 
@@ -828,6 +882,8 @@ function App() {
             panelMode={panelMode} setPanelMode={setPanelMode}
             theme={theme} setTheme={setTheme}
             torchSize={torchSize} setTorchSize={setTorchSize}
+            bgStyle={bgStyle} setBgStyle={setBgStyle}   // <^+背景风格相关 props&>
+            onPickCustomBackground={handlePickBackgroundDirect}  // <^传递自定义图片选择函数&>
           /></div>}
         </main>
       </div>
@@ -869,6 +925,19 @@ function App() {
           />
         )}
       </AnimatePresence>
+
+      {/* <^首次启动欢迎弹窗&> */}
+      <WelcomeModal
+        isOpen={showWelcome}
+        onSelect={handleWelcomeSelect}
+        onClose={() => {
+          // <^关闭弹窗without选择 => 使用 preset&>
+          setBgStyle('preset');
+          localStorage.setItem('bgStyle', 'preset');
+          localStorage.setItem('hasSeenWelcome', 'true');
+          setShowWelcome(false);
+        }}
+      />
     </>
   );
 }
