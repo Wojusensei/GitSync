@@ -46,7 +46,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd src-tauri/target/x86_64-unknown-linux-gnu/release
-          tar -czvf GitSync-0.3.2-linux-x86_64.tar.gz git-tool
+          tar -czvf GitSync-0.3.2-linux-x86_64.tar.gz GitSync
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
