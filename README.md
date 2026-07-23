@@ -7,7 +7,7 @@
 ## ✨ 功能
 
 ### 核心浏览
-- **交互式提交历史**：悬停高亮、手电筒效果，配合虚拟滚动支持 1000+ 提交不卡顿
+- **交互式提交历史**：悬停高亮、手电筒效果，配合虚拟滚动支持 1k+ 提交不卡顿
 - **分支可视化与管理**：一键切换分支，蓝点跟随当前分支
 - **提交详情面板**：查看 Diff、文件变更统计、语法高亮
 - **智能 Blame**：逐行显示代码作者和时间
@@ -36,7 +36,7 @@
 - **插件脚本扩展系统**：自定义脚本放入 `~/.git-tool/scripts/` 即可运行
 - **侧边栏折叠面板**：功能分组管理，按需展开
 - **Git Hooks 管理器**：浏览、编辑、保存 Git Hook 脚本
-- **UI 管理**：深色 / 浅色 / 柔和色模式主题切换，自定义背景，手电筒大小调整等
+- **UI 管理**：深色 / 浅色 / 柔和色模式主题切换，自定义背景，手电筒大小调整等，还可选择MD2
 
 ### 搜索与导出
 - **提交筛选**：按作者、日期、文件路径过滤
@@ -63,42 +63,57 @@
 
 ### macOS
 
-[GitSync_0.3.1_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.3.1/GitSync_0.3.1_aarch64.dmg)
-
-双击 `.dmg` 文件，将 GitSync 拖入 **Applications** 文件夹即可完成安装。
+[GitSync_0.3.2_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync_0.3.2_aarch64.dmg)
 
 ### Windows
 
-[GitSync_0.3.1_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.3.1/GitSync_0.3.1_x64-setup.exe)
+[GitSync_0.3.2_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync_0.3.2_x64-setup.exe)
+
+### Linux (Debian / Ubuntu)
+
+[GitSync_0.3.2_amd64.deb](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync_0.3.2_amd64.deb)
+
+### Linux (Fedora / RHEL)
+
+[GitSync-0.3.2-1.x86_64.rpm](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync-0.3.2-1.x86_64.rpm)
+
+### Linux (通用 tar.gz)
+
+[GitSync-0.3.2-linux-x86_64.tar.gz](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync-0.3.2-linux-x86_64.tar.gz)
+
+
+### Arch Linux
+
+- 目前官方提供的 Linux 安装包为 `.deb`（Debian/Ubuntu）和 `.rpm`（Fedora/RHEL），这两类包可以通过 `debtap` 工具在 Arch 系统中转换为可安装的格式。
+
+## 😋 安装
+
+### macOS
+
+双击 `.dmg` 文件，将 GitSync 拖入 **Applications** 文件夹。
+
+### Windows
 
 双击 `.exe` 安装程序，按提示完成安装。
 
 ### Linux (Debian / Ubuntu)
 
-[GitSync_0.3.1_amd64.deb](https://github.com/Wojusensei/GitSync/releases/download/v0.3.1/GitSync_0.3.1_amd64.deb)
-
 ```bash
-sudo dpkg -i GitSync_0.3.1_amd64.deb
+sudo dpkg -i GitSync_0.3.2_amd64.deb
 ```
 
-### Linux (Fedora / RHEL)
-
-[GitSync-0.3.1-1.x86_64.rpm](https://github.com/Wojusensei/GitSync/releases/download/v0.3.1/GitSync-0.3.1-1.x86_64.rpm)
+## Linux (Fedora / RHEL)
 
 ```bash
-sudo rpm -ivh GitSync-0.3.1-1.x86_64.rpm
+sudo rpm -ivh GitSync-0.3.2-1.x86_64.rpm
 ```
-### Linux 通用 (.tar.gz)
 
-[GitSync-0.3.1-linux-x86_64.tar.gz](https://github.com/Wojusensei/GitSync/releases/download/v0.3.1/GitSync-0.3.1-linux-x86_64.tar.gz)
+## Linux 通用 tar.gz
 
 ```bash
-sudo mkdir -p /opt/gitsync && sudo tar -xzvf GitSync-0.3.1-linux-x86_64.tar.gz -C /opt/gitsync && sudo ln -sf /opt/gitsync/git-tool /usr/local/bin/gitsync
+tar -xzvf GitSync-0.3.2-linux-x86_64.tar.gz
+./GitSync
 ```
-
-### Arch Linux
-
-- 目前官方提供的 Linux 安装包为 `.deb`（Debian/Ubuntu）和 `.rpm`（Fedora/RHEL），这两类包可以通过 `debtap` 工具在 Arch 系统中转换为可安装的格式。
 
 ## 🚀 使用
 
@@ -120,6 +135,10 @@ sudo mkdir -p /opt/gitsync && sudo tar -xzvf GitSync-0.3.1-linux-x86_64.tar.gz -
 ## 🤝 贡献
 
 欢迎提交 Issue 和 Pull Request。请确保代码符合项目风格，并在提交前运行 `cargo clippy` 和 `npm run build` 检查。欢迎所有用户开发插件，未来或将对插件进行统一管理（插件数量够多的情况下）。特别的，有任何使用上的意见请提交 Issue，目前项目已经基本完善，更新速度相较于开发期会减慢。
+
+如果你希望 GitSync 提供官方 Arch Linux 包，欢迎贡献 PKGBUILD 脚本。你可以：
+- 在 AUR 上维护 GitSync 包
+- 将 PKGBUILD 提交到本仓库，我们会在后续版本中将其纳入发布流程
 
 ## 📄 开源协议
 
