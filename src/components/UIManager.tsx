@@ -14,6 +14,9 @@ interface UIManagerProps {
   setTheme: (v: string) => void;
   torchSize: number;
   setTorchSize: (v: number) => void;
+  bgStyle: 'preset' | 'md' | 'custom';  // <^++new背景风格状态&>
+  setBgStyle: (v: 'preset' | 'md' | 'custom') => void;  // <^+setting函数&>
+  onPickCustomBackground: () => void;  // <^+自定义图回调&>
 }
 
 export default function UIManager({
@@ -23,6 +26,8 @@ export default function UIManager({
   panelMode, setPanelMode,
   theme, setTheme,
   torchSize, setTorchSize,
+  bgStyle, setBgStyle,  // <^接收背景风格状态&>
+  onPickCustomBackground,  // <^接收自定义图片选择函数&>
 }: UIManagerProps) {
   const [customBgError, setCustomBgError] = useState('');
   const [bgPreview, setBgPreview] = useState<string | null>(null);
@@ -32,6 +37,14 @@ export default function UIManager({
     { id: 'soft', label: '柔和', bg: '#e6e2d9' },
   ];
 
+  // <^背景风格选项config&>
+  const bgStyleOptions = [
+    { id: 'preset' as const, label: '官方预设', icon: '🌊', desc: '蔚蓝档案风格' },
+    { id: 'md' as const, label: 'MD 纯色', icon: '🎨', desc: 'Material Design 柔和渐变' },
+    { id: 'custom' as const, label: '自定义图片', icon: '🖼️', desc: '上传你的背景图' },
+  ];
+
+  // <^自定义图片选择&>
   const handlePickBackground = async () => {
     setCustomBgError('');
     setBgPreview(null);
@@ -41,6 +54,9 @@ export default function UIManager({
         setBgBase64(b64);
         localStorage.setItem('bg_base64', b64);
         setBgPreview(b64);
+        // <^chasnge&>
+        setBgStyle('custom');
+        localStorage.setItem('bgStyle', 'custom');
       }
     } catch (e: any) {
       setCustomBgError(String(e));
@@ -52,6 +68,20 @@ export default function UIManager({
     localStorage.setItem('bg_base64', defaultBgBase64);
     setBgPreview(null);
     setCustomBgError('');
+    // <^重置&>
+    setBgStyle('preset');
+    localStorage.setItem('bgStyle', 'preset');
+  };
+
+  // <^切换&>
+  const handleBgStyleChange = (style: 'preset' | 'md' | 'custom') => {
+    setBgStyle(style);
+    localStorage.setItem('bgStyle', style);
+    // <^切换自定义风格 without 自定义图片 => open文件选择器&>
+    if (style === 'custom') {
+      // <^onPickCustomBackground&>
+      onPickCustomBackground();
+    }
   };
 
   return (
@@ -60,6 +90,48 @@ export default function UIManager({
         <VscLayout size={18} />
         UI 管理
       </h3>
+
+      {/* <^背景风格选择++&> */}
+      <div className="analysis-section" style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <VscColorMode size={14} style={{ color: '#8899aa' }} />
+          <span className="section-title" style={{ marginBottom: 0 }}>背景风格</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+          {bgStyleOptions.map((option) => (
+            <button
+              key={option.id}
+              onClick={() => handleBgStyleChange(option.id)}
+              style={{
+                background: bgStyle === option.id ? 'rgba(91,155,213,0.2)' : 'rgba(255,255,255,0.03)',
+                border: bgStyle === option.id ? '1px solid rgba(91,155,213,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 12,
+                padding: '12px 8px 10px',
+                cursor: 'pointer',
+                transition: 'all 0.25s ease',
+                textAlign: 'center',
+                color: bgStyle === option.id ? '#ffffff' : '#c8d6e5',
+              }}
+              onMouseEnter={(e) => {
+                if (bgStyle !== option.id) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (bgStyle !== option.id) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                }
+              }}
+            >
+              <div style={{ fontSize: 22, marginBottom: 4 }}>{option.icon}</div>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>{option.label}</div>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{option.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
