@@ -5,9 +5,17 @@ interface WelcomeModalProps {
   isOpen: boolean;
   onSelect: (style: 'preset' | 'md' | 'custom') => void;
   onClose: () => void;
+  defaultBgBase64: string;
+  bgBase64?: string;
 }
 
-export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModalProps) {
+export default function WelcomeModal({
+  isOpen,
+  onSelect,
+  onClose,
+  defaultBgBase64,
+  bgBase64,
+}: WelcomeModalProps) {
   if (!isOpen) return null;
 
   return (
@@ -28,8 +36,8 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
         >
           <div className="glass-modal-header">
             <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 22 }}>🎨</span>
-              选择你的背景风格
+              <span style={{ fontSize: 22 }}>😋</span>
+              选择你想要的背景风格
             </h3>
             <button
               className="glass-close-btn"
@@ -54,7 +62,7 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
                   background: 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.08)',
                   borderRadius: 16,
-                  padding: '16px 12px 14px',
+                  padding: '12px 12px 10px',
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   textAlign: 'center',
@@ -76,16 +84,16 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
                     width: '100%',
                     height: 80,
                     borderRadius: 10,
-                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-                    marginBottom: 10,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 32,
-                    opacity: 0.7,
+                    overflow: 'hidden',
+                    marginBottom: 8,
+                    background: '#1a1a2e',
                   }}
                 >
-                  🌊
+                  <img
+                    src={`data:image/jpeg;base64,${defaultBgBase64}`}
+                    alt="官方预设"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
                 </div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>官方预设</div>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>蔚蓝档案风格</div>
@@ -99,7 +107,7 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
                   background: 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.08)',
                   borderRadius: 16,
-                  padding: '16px 12px 14px',
+                  padding: '12px 12px 10px',
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   textAlign: 'center',
@@ -121,17 +129,10 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
                     width: '100%',
                     height: 80,
                     borderRadius: 10,
+                    marginBottom: 8,
                     background: 'linear-gradient(145deg, #1a1a2e, #16213e, #0f3460)',
-                    marginBottom: 10,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 32,
-                    opacity: 0.7,
                   }}
-                >
-                  🎨
-                </div>
+                />
                 <div style={{ fontWeight: 600, fontSize: 14 }}>MD 纯色</div>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>Material Design 柔和渐变</div>
               </button>
@@ -144,7 +145,7 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
                   background: 'rgba(255,255,255,0.04)',
                   border: '1px solid rgba(255,255,255,0.08)',
                   borderRadius: 16,
-                  padding: '16px 12px 14px',
+                  padding: '12px 12px 10px',
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   textAlign: 'center',
@@ -166,16 +167,23 @@ export default function WelcomeModal({ isOpen, onSelect, onClose }: WelcomeModal
                     width: '100%',
                     height: 80,
                     borderRadius: 10,
+                    overflow: 'hidden',
+                    marginBottom: 8,
                     background: 'rgba(255,255,255,0.05)',
-                    marginBottom: 10,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: 32,
-                    opacity: 0.7,
                   }}
                 >
-                  🖼️
+                  {bgBase64 ? (
+                    <img
+                      src={`data:image/jpeg;base64,${bgBase64}`}
+                      alt="自定义"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <span style={{ fontSize: 28, color: 'rgba(255,255,255,0.2)' }}>+</span>
+                  )}
                 </div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>自定义图片</div>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>上传你的背景图</div>
