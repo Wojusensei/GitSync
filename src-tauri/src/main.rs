@@ -1406,63 +1406,116 @@ struct ConflictBlock {
     theirs_text: String,
 }
 
+enum ConflictParseState {
+    Normal,
+    Ours,
+    Base,
+    Theirs,
+}
+
+struct ParsedConflicts {
+    blocks: Vec<ConflictBlock>,
+    // 每个冲突块之前的普通文本；长度恒为 blocks.len() + 1，最后一段是文件末尾的普通文本
+    merged_parts: Vec<String>,
+}
+
+fn parse_conflict_content(content: &str) -> ParsedConflicts {
+    let mut blocks = Vec::new();
+    let mut merged_parts = Vec::new();
+    let mut current_part = String::new();
+    let mut ours_lines: Vec<String> = Vec::new();
+    let mut theirs_lines: Vec<String> = Vec::new();
+    let mut state = ConflictParseState::Normal;
+
+    for line in content.lines() {
+        match state {
+            ConflictParseState::Normal => {
+                // 只在非冲突状态下把 <<<<<<< 当作冲突开始，避免嵌套/孤立标记误判
+                if line.starts_with("<<<<<<<") {
+                    state = ConflictParseState::Ours;
+                } else {
+                    current_part.push_str(line);
+                    current_part.push('\n');
+                }
+            }
+            ConflictParseState::Ours => {
+                if line.starts_with("|||||||") {
+                    // diff3 风格的公共祖先段，既不属于 ours 也不属于 theirs
+                    state = ConflictParseState::Base;
+                } else if line.starts_with("=======") {
+                    state = ConflictParseState::Theirs;
+                } else {
+                    ours_lines.push(line.to_string());
+                }
+            }
+            ConflictParseState::Base => {
+                if line.starts_with("=======") {
+                    state = ConflictParseState::Theirs;
+                }
+            }
+            ConflictParseState::Theirs => {
+                if line.starts_with(">>>>>>>") {
+                    blocks.push(ConflictBlock {
+                        ours_text: ours_lines.join("\n"),
+                        theirs_text: theirs_lines.join("\n"),
+                    });
+                    ours_lines.clear();
+                    theirs_lines.clear();
+                    merged_parts.push(std::mem::take(&mut current_part));
+                    state = ConflictParseState::Normal;
+                } else {
+                    theirs_lines.push(line.to_string());
+                }
+            }
+        }
+    }
+
+    merged_parts.push(current_part);
+    ParsedConflicts { blocks, merged_parts }
+}
+
+// 把每块的解决文本插回冲突原来的位置；空解决文本回退到 ours（与原有交互语义一致）
+fn build_resolved_content(parsed: &ParsedConflicts, resolutions: &[String]) -> String {
+    let mut out = String::new();
+    for (i, block) in parsed.blocks.iter().enumerate() {
+        out.push_str(&parsed.merged_parts[i]);
+        let chosen = if resolutions.get(i).map_or(true, |r| r.is_empty()) {
+            block.ours_text.as_str()
+        } else {
+            resolutions[i].as_str()
+        };
+        if !chosen.is_empty() {
+            out.push_str(chosen);
+            out.push('\n');
+        }
+    }
+    out.push_str(parsed.merged_parts.last().map(String::as_str).unwrap_or(""));
+    out
+}
+
 #[tauri::command]
 fn get_conflict_detail(path: String) -> Result<Vec<ConflictDetail>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
     let mut conflict_files = Vec::new();
-    
+
     if let Ok(statuses) = repo.statuses(None) {
         for entry in statuses.iter() {
             if entry.status() == git2::Status::CONFLICTED {
                 let file_path = entry.path().unwrap_or("未知").to_string();
-                let full_path = format!("{}/{}", expanded, file_path);
+                let full_path = Path::new(&expanded).join(&file_path);
                 if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    let mut merged = String::new();
-                    let mut blocks = Vec::new();
-                    let mut in_ours = false;
-                    let mut in_theirs = false;
-                    let mut ours_lines = Vec::new();
-                    let mut theirs_lines = Vec::new();
-                    
-                    for line in content.lines() {
-                        if line.starts_with("<<<<<<<") {
-                            in_ours = true;
-                            continue;
-                        } else if line.starts_with("=======") {
-                            in_ours = false;
-                            in_theirs = true;
-                            continue;
-                        } else if line.starts_with(">>>>>>>") {
-                            in_theirs = false;
-                            blocks.push(ConflictBlock {
-                                ours_text: ours_lines.join("\n"),
-                                theirs_text: theirs_lines.join("\n"),
-                            });
-                            ours_lines.clear();
-                            theirs_lines.clear();
-                            continue;
-                        }
-                        
-                        if in_ours {
-                            ours_lines.push(line.to_string());
-                        } else if in_theirs {
-                            theirs_lines.push(line.to_string());
-                        } else {
-                            merged.push_str(line);
-                            merged.push('\n');
-                        }
-                    }
-                    
-                    let ours = blocks.iter().map(|b| b.ours_text.as_str()).collect::<Vec<&str>>().join("\n");
-                    let theirs = blocks.iter().map(|b| b.theirs_text.as_str()).collect::<Vec<&str>>().join("\n");
-                    
+                    let parsed = parse_conflict_content(&content);
+                    let ours = parsed.blocks.iter().map(|b| b.ours_text.as_str()).collect::<Vec<&str>>().join("\n");
+                    let theirs = parsed.blocks.iter().map(|b| b.theirs_text.as_str()).collect::<Vec<&str>>().join("\n");
+                    let merged = parsed.merged_parts.concat();
+
                     conflict_files.push(ConflictDetail {
                         path: file_path,
                         ours,
                         theirs,
                         merged,
-                        conflict_blocks: blocks,
+                        conflict_blocks: parsed.blocks,
                     });
                 }
             }
@@ -1472,10 +1525,27 @@ fn get_conflict_detail(path: String) -> Result<Vec<ConflictDetail>, String> {
 }
 
 #[tauri::command]
-fn resolve_conflict(path: String, file_path: String, resolution: String) -> Result<(), String> {
+fn resolve_conflict(path: String, file_path: String, resolutions: Vec<String>) -> Result<(), String> {
     let expanded = shellexpand::tilde(&path).to_string();
-    let full_path = format!("{}/{}", expanded, file_path);
-    std::fs::write(&full_path, resolution).map_err(|e| format!("写入失败: {}", e))?;
+    let full_path = Path::new(&expanded).join(&file_path);
+    let content = std::fs::read_to_string(&full_path)
+        .map_err(|e| format!("读取失败: {}", e))?;
+    let parsed = parse_conflict_content(&content);
+    if parsed.blocks.len() != resolutions.len() {
+        return Err(format!(
+            "文件冲突块数量已变化（当前 {} 个），请重新加载后再试",
+            parsed.blocks.len()
+        ));
+    }
+    let resolved = build_resolved_content(&parsed, &resolutions);
+    std::fs::write(&full_path, resolved).map_err(|e| format!("写入失败: {}", e))?;
+
+    // 写入索引（stage 0），真正把该文件标记为已解决
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let mut index = repo.index().map_err(|e| format!("无法读取索引: {}", e))?;
+    index.add_path(Path::new(&file_path)).map_err(|e| format!("标记已解决失败: {}", e))?;
+    index.write().map_err(|e| format!("写入索引失败: {}", e))?;
     Ok(())
 }
 
@@ -2112,4 +2182,126 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");
+}
+
+#[cfg(test)]
+mod conflict_tests {
+    use super::*;
+
+    #[test]
+    fn parses_simple_conflict() {
+        let content = "line1\n<<<<<<< HEAD\nours line\n=======\ntheirs line\n>>>>>>> feature\nline2\n";
+        let parsed = parse_conflict_content(content);
+        assert_eq!(parsed.blocks.len(), 1);
+        assert_eq!(parsed.blocks[0].ours_text, "ours line");
+        assert_eq!(parsed.blocks[0].theirs_text, "theirs line");
+        assert_eq!(
+            parsed.merged_parts,
+            vec!["line1\n".to_string(), "line2\n".to_string()]
+        );
+    }
+
+    #[test]
+    fn rebuild_inserts_resolution_at_original_position() {
+        let content = "line1\n<<<<<<< HEAD\nours line\n=======\ntheirs line\n>>>>>>> feature\nline2\n";
+        let parsed = parse_conflict_content(content);
+        let resolved = build_resolved_content(&parsed, &["picked line".to_string()]);
+        assert_eq!(resolved, "line1\npicked line\nline2\n");
+    }
+
+    #[test]
+    fn empty_resolution_falls_back_to_ours() {
+        let content = "line1\n<<<<<<< HEAD\nours line\n=======\ntheirs line\n>>>>>>> feature\nline2\n";
+        let parsed = parse_conflict_content(content);
+        let resolved = build_resolved_content(&parsed, &["".to_string()]);
+        assert_eq!(resolved, "line1\nours line\nline2\n");
+    }
+
+    #[test]
+    fn multiple_blocks_stay_in_order() {
+        let content = "a\n<<<<<<< H\no1\n=======\nt1\n>>>>>>> f\nmid\n<<<<<<< H\no2\n=======\nt2\n>>>>>>> f\nz\n";
+        let parsed = parse_conflict_content(content);
+        assert_eq!(parsed.blocks.len(), 2);
+        assert_eq!(parsed.merged_parts.len(), 3);
+        assert_eq!(parsed.merged_parts[1], "mid\n");
+        let resolved = build_resolved_content(&parsed, &["r1".to_string(), "r2".to_string()]);
+        assert_eq!(resolved, "a\nr1\nmid\nr2\nz\n");
+    }
+
+    #[test]
+    fn multiline_block_content_is_preserved() {
+        let content = "a\n<<<<<<< H\no1\no2\n=======\nt1\nt2\nt3\n>>>>>>> f\nb\n";
+        let parsed = parse_conflict_content(content);
+        assert_eq!(parsed.blocks[0].ours_text, "o1\no2");
+        assert_eq!(parsed.blocks[0].theirs_text, "t1\nt2\nt3");
+        let resolved = build_resolved_content(&parsed, &["x\ny".to_string()]);
+        assert_eq!(resolved, "a\nx\ny\nb\n");
+    }
+
+    #[test]
+    fn diff3_base_section_is_excluded() {
+        let content = "a\n<<<<<<< HEAD\nours\n||||||| merged\nbase1\nbase2\n=======\ntheirs\n>>>>>>> f\nb\n";
+        let parsed = parse_conflict_content(content);
+        assert_eq!(parsed.blocks.len(), 1);
+        assert_eq!(parsed.blocks[0].ours_text, "ours");
+        assert_eq!(parsed.blocks[0].theirs_text, "theirs");
+        let resolved = build_resolved_content(&parsed, &["theirs".to_string()]);
+        assert_eq!(resolved, "a\ntheirs\nb\n");
+    }
+
+    #[test]
+    fn equals_sign_outside_conflict_is_plain_content() {
+        let content = "Title\n=======\nbody\n";
+        let parsed = parse_conflict_content(content);
+        assert!(parsed.blocks.is_empty());
+        assert_eq!(parsed.merged_parts.concat(), content);
+    }
+
+    #[test]
+    fn conflict_at_file_boundaries() {
+        let content = "<<<<<<< H\nours\n=======\ntheirs\n>>>>>>> f\n";
+        let parsed = parse_conflict_content(content);
+        assert_eq!(parsed.blocks.len(), 1);
+        assert_eq!(parsed.merged_parts[0], "");
+        let resolved = build_resolved_content(&parsed, &["x".to_string()]);
+        assert_eq!(resolved, "x\n");
+    }
+
+    #[test]
+    fn no_conflict_returns_content_unchanged() {
+        let content = "just\nsome\nlines\n";
+        let parsed = parse_conflict_content(content);
+        assert!(parsed.blocks.is_empty());
+        assert_eq!(build_resolved_content(&parsed, &[]), content);
+    }
+
+    #[test]
+    fn resolve_conflict_rewrites_and_stages_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "keep\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n").unwrap();
+        let path_str = dir.path().to_str().unwrap().to_string();
+
+        resolve_conflict(path_str, "a.txt".to_string(), vec!["chosen".to_string()]).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep\nchosen\n");
+        let index = repo.index().unwrap();
+        assert!(index.get_path(Path::new("a.txt"), 0).is_some(), "文件应被加入索引（stage 0）");
+    }
+
+    #[test]
+    fn resolve_conflict_rejects_stale_block_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "keep\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n").unwrap();
+        let path_str = dir.path().to_str().unwrap().to_string();
+
+        let err = resolve_conflict(path_str, "a.txt".to_string(), vec![]).unwrap_err();
+        assert!(err.contains("冲突块数量已变化"), "unexpected error: {}", err);
+
+        // 文件不应被修改
+        let content = std::fs::read_to_string(&file).unwrap();
+        assert!(content.starts_with("keep\n<<<<<<<"));
+    }
 }
