@@ -506,6 +506,7 @@ fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
     revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut contributors: std::collections::HashMap<String, (String, usize, usize, usize)> = std::collections::HashMap::new();
+    let mut processed = 0usize;
 
     for oid in revwalk {
         let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
@@ -538,7 +539,10 @@ fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
             }
         }
 
-        if contributors.len() >= 50 {
+        // 上限针对处理的提交数（与 get_hot_files 一致）；原实现误用贡献者人数，
+        // 作者不足 50 人的仓库会遍历全部历史并逐提交做 diff，大仓库会长时间卡死
+        processed += 1;
+        if processed >= 500 {
             break;
         }
     }
@@ -1023,7 +1027,8 @@ fn generate_changelog(path: String, count: usize) -> Result<Vec<ChangelogEntry>,
     let mut current_messages = Vec::new();
 
     for commit in commits.iter().take(count) {
-        let date = &commit.time[..10];
+        // "未知时间" 等多字节字符串按字节切片会 panic，get 在非字符边界返回 None
+        let date = commit.time.get(..10).unwrap_or(commit.time.as_str());
         if date != current_date {
             if !current_date.is_empty() {
                 entries.push(ChangelogEntry {
@@ -1613,7 +1618,7 @@ fn run_script(path: String, script_name: String) -> Result<String, String> {
 // SQL 查询引擎 v2 — 微型数据库
 // ====================
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct QueryResult {
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
@@ -1658,7 +1663,8 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
         });
 
         if let Ok(diff) = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) {
-            for delta in diff.deltas() {
+            let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
+            for (idx, delta) in deltas.iter().enumerate() {
                 let status = match delta.status() {
                     git2::Delta::Added => "A",
                     git2::Delta::Deleted => "D",
@@ -1669,30 +1675,24 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
                 let file_path = delta.new_file().path()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let (additions, deletions) = if let Ok(Some(_patch)) = git2::Patch::from_diff(&diff, 0) {
-                    let mut add = 0;
-                    let mut del = 0;
-                    // 简化：对整个 patch 遍历统计
-                    if let Ok(_) = diff.foreach(
-                        &mut |_, _| true,
-                        None,
-                        None,
-                        Some(&mut |_, _, line| {
+                // 按文件各自的 patch 统计增删行，避免把整笔提交的总量算到每个文件上
+                let (additions, deletions) = git2::Patch::from_diff(&diff, idx)
+                    .ok()
+                    .flatten()
+                    .map(|mut p| {
+                        let mut add = 0;
+                        let mut del = 0;
+                        let _ = p.print(&mut |_delta, _hunk, line| {
                             match line.origin() {
                                 '+' => add += 1,
                                 '-' => del += 1,
                                 _ => {}
                             }
                             true
-                        }),
-                    ) {
+                        });
                         (add, del)
-                    } else {
-                        (0, 0)
-                    }
-                } else {
-                    (0, 0)
-                };
+                    })
+                    .unwrap_or((0, 0));
 
                 files.push(FileChangeRow {
                     commit_hash: hash.clone(),
@@ -1710,30 +1710,83 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
     Ok((commits, files))
 }
 
-// 解析聚合函数，返回 (函数名, 列名)
-fn parse_aggregate(expr: &str) -> Option<(String, String)> {
-    let expr = expr.trim();
-    let upper = expr.to_uppercase();
-    for func in &["COUNT", "SUM", "AVG", "MAX", "MIN"] {
-        if upper.starts_with(func) {
-            let inner = expr[func.len()..].trim().trim_start_matches('(').trim_end_matches(')').trim();
-            if inner == "*" {
-                return Some((func.to_string(), "*".into()));
-            }
-            return Some((func.to_string(), inner.to_string()));
-        }
+// 旧方言的 CONTAINS 改写为 SQLite 的 LIKE '%x%'（值中的 % _ \ 做转义）。
+// 字符串字面量内部不改写；CONTAINS 后面不是字符串字面量时原样保留，交给 SQLite 报语法错误。
+fn rewrite_contains(sql: &str) -> String {
+    fn is_word_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
     }
-    None
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' {
+            // 原样复制整个字符串字面量（含 '' 转义）
+            out.push(c);
+            i += 1;
+            while i < chars.len() {
+                out.push(chars[i]);
+                if chars[i] == '\'' {
+                    if chars.get(i + 1) == Some(&'\'') {
+                        out.push('\'');
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if is_word_char(c) {
+            let start = i;
+            while i < chars.len() && is_word_char(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            if word.eq_ignore_ascii_case("contains") {
+                let mut j = i;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                if chars.get(j) == Some(&'\'') {
+                    let mut k = j + 1;
+                    let mut val = String::new();
+                    while k < chars.len() && chars[k] != '\'' {
+                        val.push(chars[k]);
+                        k += 1;
+                    }
+                    if k < chars.len() {
+                        let escaped = val
+                            .replace('\\', "\\\\")
+                            .replace('%', "\\%")
+                            .replace('_', "\\_");
+                        // 不带前导空格：关键词前的空白已原样保留
+                        out.push_str("LIKE '%");
+                        out.push_str(&escaped);
+                        out.push_str("%' ESCAPE '\\'");
+                        i = k + 1;
+                        continue;
+                    }
+                }
+            }
+            out.push_str(&word);
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
 }
 
-// 匹配 WHERE 条件
-fn match_filter(val: &str, op: &str, target: &str) -> bool {
-    match op {
-        "=" => val.to_lowercase() == target.to_lowercase(),
-        ">" => *val > *target,
-        "<" => *val < *target,
-        "CONTAINS" => val.to_lowercase().contains(&target.to_lowercase()),
-        _ => false,
+fn format_sql_error(e: &rusqlite::Error) -> String {
+    let msg = e.to_string();
+    if msg.contains("no such table") {
+        format!("表不存在，可用表: commits, file_changes（{}）", msg)
+    } else {
+        msg
     }
 }
 
@@ -1747,246 +1800,76 @@ fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
 
     let (commits, file_changes) = collect_all_data(&repo)?;
 
-    // 解析 SQL
-    let sql_upper = sql.to_uppercase();
-    let select_idx = sql_upper.find("SELECT").ok_or("SQL 语法错误: 缺少 SELECT")?;
-    let from_idx = sql_upper.find("FROM").ok_or("SQL 语法错误: 缺少 FROM")?;
-    let join_idx = sql_upper.find("JOIN");
-    let where_idx = sql_upper.find("WHERE");
-    let group_idx = sql_upper.find("GROUP BY");
-    let order_idx = sql_upper.find("ORDER BY");
-    let limit_idx = sql_upper.find("LIMIT");
+    let sql = rewrite_contains(&sql);
 
-    // 表名
-    let from_end = join_idx.unwrap_or(where_idx.unwrap_or(group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())))));
-    let from_part = &sql[from_idx + 4..from_end].trim().to_lowercase();
-    let main_table = from_part.as_str();
-    let mut join_table: Option<&str> = None;
-    let mut join_condition: Option<(String, String)> = None; // (left, right)
+    let conn = rusqlite::Connection::open_in_memory()
+        .map_err(|e| format!("无法创建查询引擎: {}", e))?;
+    conn.execute_batch(
+        "CREATE TABLE commits (
+            hash TEXT COLLATE NOCASE,
+            author TEXT COLLATE NOCASE,
+            time TEXT COLLATE NOCASE,
+            message TEXT COLLATE NOCASE
+        );
+        CREATE TABLE file_changes (
+            commit_hash TEXT COLLATE NOCASE,
+            file_path TEXT COLLATE NOCASE,
+            status TEXT COLLATE NOCASE,
+            additions INTEGER,
+            deletions INTEGER
+        );",
+    )
+    .map_err(|e| format!("初始化表失败: {}", e))?;
 
-    if let Some(ji) = join_idx {
-        let join_end = where_idx.unwrap_or(group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()))));
-        let join_part = &sql[ji..join_end].trim();
-        let parts: Vec<&str> = join_part.split_whitespace().collect();
-        if parts.len() >= 4 {
-            join_table = Some(parts[1]);
-            let on_idx = join_part.to_uppercase().find("ON");
-            if let Some(oi) = on_idx {
-                let cond = &join_part[oi + 2..].trim();
-                let cond_parts: Vec<&str> = cond.split('=').collect();
-                if cond_parts.len() == 2 {
-                    join_condition = Some((cond_parts[0].trim().to_string(), cond_parts[1].trim().to_string()));
-                }
+    {
+        let mut stmt = conn
+            .prepare("INSERT INTO commits VALUES (?1, ?2, ?3, ?4)")
+            .map_err(|e| format!("初始化表失败: {}", e))?;
+        for c in &commits {
+            stmt.execute(rusqlite::params![c.hash, c.author, c.time, c.message])
+                .map_err(|e| format!("写入数据失败: {}", e))?;
+        }
+    }
+    {
+        let mut stmt = conn
+            .prepare("INSERT INTO file_changes VALUES (?1, ?2, ?3, ?4, ?5)")
+            .map_err(|e| format!("初始化表失败: {}", e))?;
+        for f in &file_changes {
+            stmt.execute(rusqlite::params![f.commit_hash, f.file_path, f.status, f.additions as i64, f.deletions as i64])
+                .map_err(|e| format!("写入数据失败: {}", e))?;
+        }
+    }
+
+    // 查询阶段只读：拒绝 ATTACH、PRAGMA、INSERT/UPDATE/DELETE 等非查询操作
+    conn.authorizer(Some(|ctx: rusqlite::hooks::AuthContext| {
+        match ctx.action {
+            rusqlite::hooks::AuthAction::Select
+            | rusqlite::hooks::AuthAction::Read { .. }
+            | rusqlite::hooks::AuthAction::Function { .. } => {
+                rusqlite::hooks::Authorization::Allow
             }
+            _ => rusqlite::hooks::Authorization::Deny,
         }
-    }
+    }))
+    .map_err(|e| format!("无法设置查询权限: {}", e))?;
 
-    // 验证表名
-    let valid_tables = ["commits", "file_changes"];
-    if !valid_tables.contains(&main_table) {
-        return Err(format!("表 \"{}\" 不存在，可用表: commits, file_changes", main_table));
-    }
-    if let Some(jt) = join_table {
-        if !valid_tables.contains(&jt) {
-            return Err(format!("表 \"{}\" 不存在，可用表: commits, file_changes", jt));
-        }
-    }
-
-    // SELECT 列
-    let select_part = &sql[select_idx + 6..from_idx].trim();
-    let mut columns: Vec<String> = Vec::new();
-    let mut aggregates: Vec<Option<(String, String)>> = Vec::new(); // 每个列对应的聚合函数
-
-    if *select_part == "*" {
-        if main_table == "commits" {
-            columns = vec!["hash".into(), "author".into(), "time".into(), "message".into()];
-        } else {
-            columns = vec!["commit_hash".into(), "file_path".into(), "status".into(), "additions".into(), "deletions".into()];
-        }
-    } else {
-        for col_expr in select_part.split(',') {
-            let col_expr = col_expr.trim();
-            // 检查是否有 AS 别名
-            let (col_name, alias) = if let Some(as_idx) = col_expr.to_uppercase().find(" AS ") {
-                let name_part = col_expr[..as_idx].trim().to_lowercase();
-                let alias_part = col_expr[as_idx + 4..].trim();
-                (name_part, alias_part.to_string())
-            } else {
-                (col_expr.to_lowercase(), col_expr.to_string())
-            };
-
-            let agg = parse_aggregate(&col_name);
-            aggregates.push(agg.clone());
-            if let Some((_func, _inner)) = &agg {
-                columns.push(alias);
-            } else {
-                columns.push(alias);
-            }
-        }
-    }
-
-    // WHERE 条件
-    let mut filters: Vec<(String, String, String)> = Vec::new(); // (column, op, value)
-    if let Some(wi) = where_idx {
-        let where_end = group_idx.unwrap_or(order_idx.unwrap_or(limit_idx.unwrap_or(sql.len())));
-        let where_part = &sql[wi + 5..where_end].trim();
-        if !where_part.is_empty() {
-            let conditions: Vec<&str> = where_part.split("AND").map(|s| s.trim()).collect();
-            for cond in conditions {
-                let cond = cond.trim();
-                if let Some(val) = cond.split(" = ").nth(1) {
-                    let col = cond.split(" = ").next().unwrap().trim().to_lowercase();
-                    filters.push((col, "=".into(), val.trim().trim_matches('\'').to_string()));
-                } else if let Some(val) = cond.split(" > ").nth(1) {
-                    let col = cond.split(" > ").next().unwrap().trim().to_lowercase();
-                    filters.push((col, ">".into(), val.trim().trim_matches('\'').to_string()));
-                } else if let Some(val) = cond.split(" < ").nth(1) {
-                    let col = cond.split(" < ").next().unwrap().trim().to_lowercase();
-                    filters.push((col, "<".into(), val.trim().trim_matches('\'').to_string()));
-                } else if cond.to_uppercase().contains("CONTAINS") {
-                    let parts: Vec<&str> = cond.split("CONTAINS").collect();
-                    if parts.len() == 2 {
-                        let col = parts[0].trim().to_lowercase();
-                        let val = parts[1].trim().trim_matches('\'').to_string();
-                        filters.push((col, "CONTAINS".into(), val));
-                    }
-                }
-            }
-        }
-    }
-
-    // 过滤主表数据
-    let filtered_commits: Vec<&Commit> = if main_table == "commits" {
-        commits.iter().filter(|c| {
-            filters.iter().all(|(col, op, val)| {
-                match col.as_str() {
-                    "author" => match_filter(&c.author, op, val),
-                    "hash" => match_filter(&c.hash, op, val),
-                    "time" => match_filter(&c.time, op, val),
-                    "message" => match_filter(&c.message, op, val),
-                    _ => true,
-                }
-            })
-        }).collect()
-    } else {
-        vec![]
-    };
-
-    // JOIN 逻辑
-    let mut joined_rows: Vec<HashMap<String, String>> = Vec::new();
-    if let (Some(_jt), Some((left, right))) = (join_table, &join_condition) {
-        let left = left.replace("commits.", "").replace("file_changes.", "");
-        let right = right.replace("commits.", "").replace("file_changes.", "");
-        for c in &filtered_commits {
-            for f in &file_changes {
-                let left_val = if left == "hash" || left == "commit_hash" { &c.hash } else { "" };
-                let right_val = if right == "hash" || right == "commit_hash" { &f.commit_hash } else if right == "file_path" { &f.file_path } else { "" };
-                if left_val == right_val {
-                    let mut row = HashMap::new();
-                    row.insert("hash".into(), c.hash.clone());
-                    row.insert("author".into(), c.author.clone());
-                    row.insert("time".into(), c.time.clone());
-                    row.insert("message".into(), c.message.clone());
-                    row.insert("commit_hash".into(), f.commit_hash.clone());
-                    row.insert("file_path".into(), f.file_path.clone());
-                    row.insert("status".into(), f.status.clone());
-                    row.insert("additions".into(), f.additions.to_string());
-                    row.insert("deletions".into(), f.deletions.to_string());
-                    joined_rows.push(row);
-                }
-            }
-        }
-    } else {
-        for c in &filtered_commits {
-            let mut row = HashMap::new();
-            row.insert("hash".into(), c.hash.clone());
-            row.insert("author".into(), c.author.clone());
-            row.insert("time".into(), c.time.clone());
-            row.insert("message".into(), c.message.clone());
-            joined_rows.push(row);
-        }
-    }
-
-    // GROUP BY 和聚合
-    let group_col = if let Some(gi) = group_idx {
-        let group_end = order_idx.unwrap_or(limit_idx.unwrap_or(sql.len()));
-        Some(sql[gi + 8..group_end].trim().to_lowercase())
-    } else {
-        None
-    };
-
+    let mut stmt = conn.prepare(&sql).map_err(|e| format_sql_error(&e))?;
+    let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let mut rows_iter = stmt.query(rusqlite::params![]).map_err(|e| format_sql_error(&e))?;
     let mut result_rows: Vec<Vec<String>> = Vec::new();
-
-    if let Some(gcol) = group_col {
-        let mut groups: HashMap<String, Vec<&HashMap<String, String>>> = HashMap::new();
-        for row in &joined_rows {
-            if let Some(val) = row.get(&gcol) {
-                groups.entry(val.clone()).or_insert_with(Vec::new).push(row);
-            }
+    while let Some(row) = rows_iter.next().map_err(|e| format_sql_error(&e))? {
+        let mut row_out = Vec::with_capacity(columns.len());
+        for i in 0..columns.len() {
+            let cell = match row.get_ref(i).map_err(|e| format_sql_error(&e))? {
+                rusqlite::types::ValueRef::Null => String::new(),
+                rusqlite::types::ValueRef::Integer(n) => n.to_string(),
+                rusqlite::types::ValueRef::Real(f) => format!("{}", f),
+                rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).to_string(),
+                rusqlite::types::ValueRef::Blob(b) => String::from_utf8_lossy(b).to_string(),
+            };
+            row_out.push(cell);
         }
-        for (_key, group_rows) in &groups {
-            let mut result_row: Vec<String> = Vec::new();
-            for (i, col) in columns.iter().enumerate() {
-                if let Some(Some((func, inner))) = aggregates.get(i) {
-                    let vals: Vec<f64> = group_rows.iter().filter_map(|r| {
-                        if inner == "*" {
-                            Some(1.0)
-                        } else {
-                            r.get(inner).and_then(|v| v.parse::<f64>().ok())
-                        }
-                    }).collect();
-                    let val = match func.as_str() {
-                        "COUNT" => vals.len() as f64,
-                        "SUM" => vals.iter().sum(),
-                        "AVG" => if vals.is_empty() { 0.0 } else { vals.iter().sum::<f64>() / vals.len() as f64 },
-                        "MAX" => vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
-                        "MIN" => vals.iter().cloned().fold(f64::INFINITY, f64::min),
-                        _ => 0.0,
-                    };
-                    result_row.push(val.to_string());
-                } else if let Some(val) = group_rows.first().and_then(|r| r.get(col)) {
-                    result_row.push(val.clone());
-                } else {
-                    result_row.push(String::new());
-                }
-            }
-            result_rows.push(result_row);
-        }
-    } else {
-        for row in &joined_rows {
-            let mut result_row: Vec<String> = Vec::new();
-            for col in &columns {
-                if let Some(val) = row.get(col) {
-                    result_row.push(val.clone());
-                } else {
-                    result_row.push(String::new());
-                }
-            }
-            result_rows.push(result_row);
-        }
-    }
-
-    // ORDER BY
-    if let Some(oi) = order_idx {
-        let order_end = limit_idx.unwrap_or(sql.len());
-        let order_part = &sql[oi + 8..order_end].trim();
-        let desc = order_part.to_uppercase().contains("DESC");
-        let order_col = order_part.replace(" DESC", "").replace(" ASC", "").trim().to_lowercase();
-        if let Some(col_idx) = columns.iter().position(|c| c == &order_col) {
-            result_rows.sort_by(|a, b| {
-                let va = a.get(col_idx).map(|s| s.as_str()).unwrap_or("");
-                let vb = b.get(col_idx).map(|s| s.as_str()).unwrap_or("");
-                if desc { vb.cmp(&va) } else { va.cmp(&vb) }
-            });
-        }
-    }
-
-    // LIMIT
-    if let Some(li) = limit_idx {
-        let limit_part = &sql[li + 5..].trim();
-        if let Ok(limit) = limit_part.parse::<usize>() {
-            result_rows.truncate(limit);
-        }
+        result_rows.push(row_out);
     }
 
     let elapsed = start.elapsed().as_millis() as u64;
@@ -2303,5 +2186,174 @@ mod conflict_tests {
         // 文件不应被修改
         let content = std::fs::read_to_string(&file).unwrap();
         assert!(content.starts_with("keep\n<<<<<<<"));
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    fn commit(repo: &git2::Repository, author: &str, msg: &str, time_secs: i64, files: &[(&str, &str)]) -> String {
+        let sig = git2::Signature::new(author, "a@b.c", &git2::Time::new(time_secs, 0)).unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        for (path, content) in files {
+            let blob = repo.blob(content.as_bytes()).unwrap();
+            tb.insert(path, blob, 0o100644).unwrap();
+        }
+        let tree_id = tb.write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let owned_parents: Vec<git2::Commit> = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| vec![c])
+            .unwrap_or_default();
+        let parents: Vec<&git2::Commit> = owned_parents.iter().collect();
+        let oid = repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents).unwrap();
+        oid.to_string()
+    }
+
+    fn setup_repo(dir: &Path) -> (String, String) {
+        let repo = git2::Repository::init(dir).unwrap();
+        let h1 = commit(&repo, "alice", "Base commit", 1_700_000_000, &[("a.txt", "x\n"), ("b.txt", "y\n")]);
+        let h2 = commit(&repo, "alice", "Add lines", 1_700_000_100, &[("a.txt", "x\nx2\n"), ("b.txt", "y\ny2\n")]);
+        (h1, h2)
+    }
+
+    fn query(dir: &Path, sql: &str) -> Result<QueryResult, String> {
+        git_query(dir.to_str().unwrap().to_string(), sql.to_string())
+    }
+
+    #[test]
+    fn file_changes_table_is_queryable() {
+        // 回归：旧解析器把非 commits 主表的行全部丢弃，此查询永远返回 0 行
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        let res = query(dir.path(), "SELECT COUNT(*) FROM file_changes").unwrap();
+        assert_eq!(res.rows, vec![vec!["4".to_string()]], "两笔提交各改两个文件");
+    }
+
+    #[test]
+    fn per_file_stats_are_not_whole_commit_totals() {
+        // 回归：旧实现把整笔提交的总量（+2）写到每个文件行上
+        let dir = tempfile::tempdir().unwrap();
+        let (_h1, h2) = setup_repo(dir.path());
+        let res = query(dir.path(), &format!(
+            "SELECT file_path, additions, deletions FROM file_changes WHERE commit_hash = '{}' ORDER BY file_path", h2
+        )).unwrap();
+        assert_eq!(res.rows, vec![
+            vec!["a.txt".to_string(), "1".to_string(), "0".to_string()],
+            vec!["b.txt".to_string(), "1".to_string(), "0".to_string()],
+        ]);
+    }
+
+    #[test]
+    fn contains_keyword_and_case_insensitive_eq() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        let res = query(dir.path(), "SELECT COUNT(*) FROM commits WHERE message CONTAINS 'base'").unwrap();
+        assert_eq!(res.rows, vec![vec!["1".to_string()]]);
+        let res = query(dir.path(), "SELECT COUNT(*) FROM commits WHERE author = 'ALICE'").unwrap();
+        assert_eq!(res.rows, vec![vec!["2".to_string()]]);
+    }
+
+    #[test]
+    fn aggregates_and_join() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        let res = query(dir.path(), "SELECT author, COUNT(*) AS cnt FROM commits GROUP BY author").unwrap();
+        assert_eq!(res.rows, vec![vec!["alice".to_string(), "2".to_string()]]);
+        let res = query(dir.path(),
+            "SELECT COUNT(*) FROM commits JOIN file_changes ON commits.hash = file_changes.commit_hash").unwrap();
+        assert_eq!(res.rows, vec![vec!["4".to_string()]]);
+        let res = query(dir.path(), "SELECT SUM(additions) FROM file_changes").unwrap();
+        assert_eq!(res.rows, vec![vec!["4".to_string()]]);
+    }
+
+    #[test]
+    fn numeric_where_comparison() {
+        // 回归：旧实现按字符串比较，"9" > "10" 为真
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        let res = query(dir.path(), "SELECT COUNT(*) FROM file_changes WHERE additions > 1").unwrap();
+        assert_eq!(res.rows, vec![vec!["0".to_string()]]);
+        let res = query(dir.path(), "SELECT COUNT(*) FROM file_changes WHERE additions > 0").unwrap();
+        assert_eq!(res.rows, vec![vec!["4".to_string()]]);
+    }
+
+    #[test]
+    fn limit_with_trailing_semicolon() {
+        // 回归：旧实现的 LIMIT 解析遇到分号会静默失效
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        let res = query(dir.path(), "SELECT hash FROM commits LIMIT 1;").unwrap();
+        assert_eq!(res.rows.len(), 1);
+    }
+
+    #[test]
+    fn malformed_sql_returns_error_instead_of_panicking() {
+        // 回归：旧解析器遇到关键词乱序会切片越界 panic，panic=abort 直接崩掉整个应用
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        assert!(query(dir.path(), "SELECT hash WHERE message CONTAINS 'x FROM y'").is_err());
+        assert!(query(dir.path(), "FROM commits SELECT hash").is_err());
+        assert!(query(dir.path(), "SELECT * FROM commits ORDER BY hash WHERE author = 'a'").is_err());
+        // 关键词出现在字符串字面量里不应影响解析
+        let res = query(dir.path(), "SELECT COUNT(*) FROM commits WHERE message CONTAINS 'select from where'").unwrap();
+        assert_eq!(res.rows, vec![vec!["0".to_string()]]);
+    }
+
+    #[test]
+    fn writes_and_attach_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        assert!(query(dir.path(), "INSERT INTO commits VALUES ('x','y','z','w')").is_err());
+        assert!(query(dir.path(), "DELETE FROM commits").is_err());
+        assert!(query(dir.path(), "ATTACH DATABASE '/tmp/gitsync-test.db' AS x").is_err());
+    }
+
+    #[test]
+    fn unknown_table_error_mentions_available_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_repo(dir.path());
+        let err = query(dir.path(), "SELECT * FROM nosuch").unwrap_err();
+        assert!(err.contains("commits, file_changes"), "err: {}", err);
+    }
+
+    #[test]
+    fn rewrite_contains_keeps_literals_and_escapes_wildcards() {
+        assert_eq!(
+            rewrite_contains("WHERE m CONTAINS 'fix'"),
+            "WHERE m LIKE '%fix%' ESCAPE '\\'"
+        );
+        assert_eq!(
+            rewrite_contains("SELECT 'a CONTAINS b'"),
+            "SELECT 'a CONTAINS b'"
+        );
+        assert!(rewrite_contains("WHERE m CONTAINS 'a%c_'")
+            .contains("LIKE '%a\\%c\\_%' ESCAPE '\\'"));
+    }
+
+    #[test]
+    fn changelog_with_unparseable_time_does_not_panic() {
+        // 回归：超出 chrono 范围的时间 -> "未知时间"（多字节），旧实现切片 [..10] 会 panic。
+        // git2 创建提交时会把时间截断成 32 位，因此直接写原始 commit 对象绕过创建路径。
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let blob = repo.blob(b"z\n").unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        tb.insert("c.txt", blob, 0o100644).unwrap();
+        let tree_id = tb.write().unwrap();
+        let data = format!(
+            "tree {}\nauthor bob <a@b.c> 10000000000000 +0000\ncommitter bob <a@b.c> 10000000000000 +0000\n\nweird time\n",
+            tree_id
+        );
+        let oid = repo.odb().unwrap().write(git2::ObjectType::Commit, data.as_bytes()).unwrap();
+        repo.reference("refs/heads/master", oid, true, "test").unwrap();
+        repo.set_head("refs/heads/master").unwrap();
+
+        let entries = generate_changelog(dir.path().to_str().unwrap().to_string(), 5).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].version, "未知时间");
     }
 }

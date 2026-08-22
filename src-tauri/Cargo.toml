@@ -18,6 +18,7 @@ chrono = "0.4.45"
 shellexpand = "3.1.2"
 base64 = "0.22"
 similar = "2.0"
+rusqlite = { version = "0.40.2", features = ["bundled", "hooks"] }
 
 [dev-dependencies]
 tempfile = "3"
