@@ -59,20 +59,12 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
     setResolutions(activeFile.conflict_blocks.map(b => b.theirs_text));
   };
 
-  const buildResolution = (): string => {
-    if (!activeFile) return '';
-    let result = activeFile.merged;
-    for (let i = 0; i < activeFile.conflict_blocks.length; i++) {
-      result += resolutions[i] || activeFile.conflict_blocks[i].ours_text;
-    }
-    return result;
-  };
-
   const save = async () => {
     if (!activeFile) return;
     setError('');
     try {
-      await invokeTauri('resolve_conflict', { path: repoPath, filePath: activeFile.path, resolution: buildResolution() });
+      // 后端负责把每块的解决文本插回冲突原位置，并 git add 标记已解决
+      await invokeTauri('resolve_conflict', { path: repoPath, filePath: activeFile.path, resolutions });
       setFiles(files.filter(f => f.path !== activeFile.path));
       if (files.length > 1) {
         const remaining = files.filter(f => f.path !== activeFile.path);

@@ -19,6 +19,9 @@ shellexpand = "3.1.2"
 base64 = "0.22"
 similar = "2.0"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 codegen-units = 1
 lto = true
