@@ -212,11 +212,6 @@ open /Applications/GitSync.app
 
 GitSync 已提供官方 Arch Linux 安装包。如果你希望继续完善 AUR 体验，例如将 PKGBUILD 提交到 AUR、补充更多架构或改进打包脚本，欢迎提交 PR。
 
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=https://github.com/Wojusensei/GitSync)](https://star-history.com/#Wojusensei/GitSync)
-
-
 ## 📄 开源协议
 
 [MIT License](https://opensource.org/licenses/MIT)
