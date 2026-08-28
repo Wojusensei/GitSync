@@ -102,7 +102,7 @@ export default function SyntaxHighlight({ repoPath, commitHash }: { repoPath: st
               {hunk.lines.map((line, j) => (
                 <div key={j} style={{
                   background: line.origin === '+' ? 'rgba(76,175,80,0.15)' : line.origin === '-' ? 'rgba(244,67,54,0.15)' : 'transparent',
-                  color: line.origin === '+' ? '#81c784' : line.origin === '-' ? '#e57373' : '#c8d6e5',
+                  color: line.origin === '+' ? '#81c784' : line.origin === '-' ? '#e57373' : 'var(--text)',
                   padding: '1px 8px',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all'

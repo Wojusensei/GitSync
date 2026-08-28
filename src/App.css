@@ -1,5 +1,9 @@
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0a14;color:#c8d6e5;min-height:100vh;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,0.5)}
+/* 主题变量：默认深色；浅色/柔和由 data-theme 切换（UI 管理/主题按钮设置） */
+:root{--bg:var(--bg);--text:var(--text);--text-dim:rgba(255,255,255,0.4);--panel:rgba(255,255,255,0.03);--border:rgba(255,255,255,0.08)}
+:root[data-theme='light']{--bg:#f0f0f0;--text:#222222;--text-dim:rgba(0,0,0,0.45);--panel:rgba(0,0,0,0.03);--border:rgba(0,0,0,0.12)}
+:root[data-theme='soft']{--bg:#e6e2d9;--text:#333333;--text-dim:rgba(0,0,0,0.45);--panel:rgba(0,0,0,0.04);--border:rgba(0,0,0,0.10)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,0.2)}
 
 /* 应用布局 */
 .app{position:relative;z-index:1;display:grid;grid-template-columns:280px 1fr;grid-template-rows:56px 1fr;height:100vh;gap:0}
@@ -81,7 +85,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .diff-content{font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.6;padding:12px 14px;overflow-x:auto;white-space:pre;color:rgba(255,255,255,0.7)}
 
 /* 操作按钮 */
-.detail-action-btn{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#c8d6e5;border-radius:6px;padding:2px 8px;cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center}
+.detail-action-btn{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text);border-radius:6px;padding:2px 8px;cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center}
 .detail-action-btn:hover{background:rgba(91,155,213,0.15);border-color:rgba(91,155,213,0.3);color:#5B9BD5}
 
 /* Blame 面板 */
@@ -90,7 +94,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .blame-line{display:flex;align-items:center;gap:12px;padding:4px 14px;font-family:'SF Mono',monospace;font-size:12px;border-bottom:1px solid rgba(255,255,255,0.02);transition:background 0.2s}
 .blame-line:hover{background:rgba(255,255,255,0.02)}
 .blame-hash{color:#5B9BD5;min-width:70px}
-.blame-author{color:#c8d6e5;min-width:100px}
+.blame-author{color:var(--text);min-width:100px}
 .blame-time{color:rgba(255,255,255,0.4);min-width:140px}
 .blame-content{color:rgba(255,255,255,0.7);flex:1;white-space:pre;overflow-x:auto}
 
@@ -203,7 +207,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .query-table td {
   border: 1px solid rgba(255,255,255,0.05);
   padding: 4px 10px;
-  color: #c8d6e5;
+  color: var(--text);
   white-space: nowrap;
 }
 .query-table tr:hover td {
@@ -461,7 +465,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .btn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #c8d6e5;
+  color: var(--text);
   padding: 8px 16px;
   border-radius: 8px;
   font-size: 13px;

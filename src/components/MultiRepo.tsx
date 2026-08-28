@@ -41,7 +41,7 @@ export default function MultiRepo({ onSelectRepo }: { onSelectRepo: (path: strin
         <input className="path-input" value={newPath} onChange={e => setNewPath(e.target.value)} placeholder="仓库路径" onKeyDown={e => e.key === 'Enter' && addRepo()} />
         <button className="btn btn-blue" onClick={addRepo}>添加</button>
       </div>
-      {paths.length === 0 && <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, padding: '0 6px' }}>暂无记录，添加后跨会话保留</div>}
+      {paths.length === 0 && <div style={{ color: 'var(--text-dim)', fontSize: 12, padding: '0 6px' }}>暂无记录，添加后跨会话保留</div>}
       {paths.map(p => (
         <div key={p} className="analysis-item" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span onClick={() => onSelectRepo(p)} style={{ cursor: 'pointer', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

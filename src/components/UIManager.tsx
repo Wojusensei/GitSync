@@ -88,7 +88,7 @@ export default function UIManager({
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <VscColorMode size={14} style={{ color: '#8899aa' }} />
+          <VscColorMode size={14} style={{ color: 'var(--text-dim)' }} />
           <span className="section-title" style={{ marginBottom: 0 }}>背景风格</span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
@@ -104,7 +104,7 @@ export default function UIManager({
                 cursor: 'pointer',
                 transition: 'all 0.25s ease',
                 textAlign: 'center',
-                color: bgStyle === option.id ? '#ffffff' : '#c8d6e5',
+                color: bgStyle === option.id ? '#ffffff' : 'var(--text)',
               }}
               onMouseEnter={(e) => {
                 if (bgStyle !== option.id) {
@@ -162,7 +162,7 @@ export default function UIManager({
                 )}
               </div>
               <div style={{ fontSize: 12, fontWeight: 600 }}>{option.label}</div>
-              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>{option.desc}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 1 }}>{option.desc}</div>
             </button>
           ))}
         </div>
@@ -170,9 +170,9 @@ export default function UIManager({
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <VscSymbolColor size={14} style={{ color: '#8899aa' }} />
+          <VscSymbolColor size={14} style={{ color: 'var(--text-dim)' }} />
           <span className="section-title" style={{ marginBottom: 0 }}>背景遮罩强度</span>
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8899aa' }}>{Math.round(bgOpacity * 100)}%</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-dim)' }}>{Math.round(bgOpacity * 100)}%</span>
         </div>
         <input
           type="range"
@@ -190,9 +190,9 @@ export default function UIManager({
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <VscLightbulb size={14} style={{ color: '#8899aa' }} />
+          <VscLightbulb size={14} style={{ color: 'var(--text-dim)' }} />
           <span className="section-title" style={{ marginBottom: 0 }}>手电筒范围</span>
-          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8899aa' }}>{torchSize}px</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-dim)' }}>{torchSize}px</span>
         </div>
         <input
           type="range"
@@ -211,7 +211,7 @@ export default function UIManager({
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <VscFileMedia size={14} style={{ color: '#8899aa' }} />
+          <VscFileMedia size={14} style={{ color: 'var(--text-dim)' }} />
           <span className="section-title" style={{ marginBottom: 0 }}>自定义背景</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -230,7 +230,7 @@ export default function UIManager({
                 background: 'rgba(255,255,255,0.05)',
                 border: '1px solid rgba(255,255,255,0.1)',
                 borderRadius: 6,
-                color: '#c8d6e5',
+                color: 'var(--text)',
                 cursor: 'pointer',
                 padding: '6px 14px',
                 fontSize: 12
@@ -266,7 +266,7 @@ export default function UIManager({
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <VscColorMode size={14} style={{ color: '#8899aa' }} />
+          <VscColorMode size={14} style={{ color: 'var(--text-dim)' }} />
             <span className="section-title" style={{ marginBottom: 0 }}>主题</span>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -304,7 +304,7 @@ export default function UIManager({
                 >
                   {theme === t.id && <VscCheck size={16} style={{ color: t.id === 'dark' ? '#5B9BD5' : '#333' }} />}
                 </div>
-                <span style={{ fontSize: 10, color: '#8899aa' }}>{t.label}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{t.label}</span>
               </button>
             ))}
           </div>
@@ -312,11 +312,11 @@ export default function UIManager({
 
         <div className="analysis-section" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <VscLayout size={14} style={{ color: '#8899aa' }} />
+            <VscLayout size={14} style={{ color: 'var(--text-dim)' }} />
             <span className="section-title" style={{ marginBottom: 0 }}>面板模式</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ fontSize: 13, color: '#c8d6e5' }}>
+            <span style={{ fontSize: 13, color: 'var(--text)' }}>
               {panelMode === 'stack' ? '叠加模式' : '替换模式'}
             </span>
             <button
@@ -352,19 +352,13 @@ export default function UIManager({
               />
             </button>
           </div>
-          <div style={{ fontSize: 11, color: '#8899aa', marginTop: 6, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.5 }}>
             {panelMode === 'replace'
               ? '替换模式：点击新功能时自动关闭之前的面板，只显示当前选中项'
               : '叠加模式：多个面板可同时展开，新面板出现时自动滚动到视图'}
           </div>
         </div>
 
-        <style>{`
-        :root[data-theme='light'] { --bg: #f0f0f0; --text: #222; }
-        :root[data-theme='soft'] { --bg: #e6e2d9; --text: #333; }
-        :root[data-theme='dark'] { --bg: #0a0a14; --text: #c8d6e5; }
-        body { background: var(--bg); color: var(--text); }
-      `}</style>
     </motion.div>
   );
 }

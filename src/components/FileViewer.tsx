@@ -47,13 +47,13 @@ export default function FileViewer({ repoPath, filePath, onClose }: FileViewerPr
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 10, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
           {getFileIcon(filePath, 18)}
-          <span style={{ fontSize: 14, fontWeight: 600, color: '#dfe6e9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {filePath}
           </span>
         </div>
         <button
           onClick={onClose}
-          style={{ background: 'transparent', border: 'none', color: '#c8d6e5', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 }}
+          style={{ background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 4 }}
           title="关闭查看"
         >
           <VscClose size={18} />
@@ -69,7 +69,7 @@ export default function FileViewer({ repoPath, filePath, onClose }: FileViewerPr
           {error}
         </div>
       ) : isBinary ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.4)', minHeight: 300 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', minHeight: 300 }}>
           <p>此文件可能是二进制文件，无法直接预览。</p>
         </div>
       ) : (
@@ -104,7 +104,7 @@ export default function FileViewer({ repoPath, filePath, onClose }: FileViewerPr
                   >
                     {idx + 1}
                   </td>
-                  <td style={{ paddingLeft: 10, whiteSpace: 'pre', color: '#c8d6e5' }}>
+                  <td style={{ paddingLeft: 10, whiteSpace: 'pre', color: 'var(--text)' }}>
                     {renderHighlightedLine(line)}
                   </td>
                 </tr>

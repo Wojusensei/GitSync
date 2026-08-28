@@ -10,9 +10,11 @@ interface GraphCommit {
   parent_hashes: string[];
 }
 
-export default function GraphView({ repoPath, onSelectCommit: _onSelectCommit }: { repoPath: string; onSelectCommit: (hash: string) => void }) {
+export default function GraphView({ repoPath, onSelectCommit }: { repoPath: string; onSelectCommit: (hash: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const positionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  const commitsRef = useRef<GraphCommit[]>([]);
 
   useEffect(() => {
     const loadGraph = async () => {
@@ -27,7 +29,9 @@ export default function GraphView({ repoPath, onSelectCommit: _onSelectCommit }:
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
       const positions: Record<string, { x: number; y: number }> = {};
-      
+      positionsRef.current = positions;
+      commitsRef.current = commits;
+
       commits.forEach((c, i) => {
         const y = i * 40 + 20;
         const x = 60 + (c.parent_hashes.length > 1 ? 20 : 0);
@@ -68,7 +72,24 @@ export default function GraphView({ repoPath, onSelectCommit: _onSelectCommit }:
     <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
       <h3>提交图</h3>
       <div ref={containerRef} style={{ maxHeight: 500, overflowY: 'auto' }}>
-        <canvas ref={canvasRef} />
+        <canvas
+          ref={canvasRef}
+          onClick={(e) => {
+            // 点击最近的提交圆点（半径 6，放宽到 14px 命中范围）
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            let best: { hash: string; dist: number } | null = null;
+            for (const [hash, pos] of Object.entries(positionsRef.current)) {
+              const d = Math.hypot(pos.x - x, pos.y - y);
+              if (d <= 14 && (!best || d < best.dist)) best = { hash, dist: d };
+            }
+            if (best) onSelectCommit(best.hash);
+          }}
+          style={{ cursor: 'pointer' }}
+        />
       </div>
     </motion.div>
   );

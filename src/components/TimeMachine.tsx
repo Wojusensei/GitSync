@@ -119,7 +119,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
           <option value={5}>5x</option>
           <option value={20}>20x</option>
         </select>
-        <span style={{ fontSize: 13, color: '#8899aa', marginLeft: 'auto' }}>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)', marginLeft: 'auto' }}>
           {snapshot?.time || '加载中...'}
         </span>
       </div>
@@ -153,7 +153,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
                     style={{ cursor: f.is_directory ? 'default' : 'pointer', display: 'flex', justifyContent: 'space-between' }}
                   >
                     <span>{f.is_directory ? '📁' : '📄'} {f.path}</span>
-                    {!f.is_directory && <span style={{ fontSize: 11, color: '#8899aa' }}>{(f.size / 1024).toFixed(1)} KB</span>}
+                    {!f.is_directory && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{(f.size / 1024).toFixed(1)} KB</span>}
                   </div>
                 ))}
               </div>
@@ -169,7 +169,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
                 overflow: 'auto',
                 fontSize: 12,
                 whiteSpace: 'pre-wrap',
-                color: '#c8d6e5',
+                color: 'var(--text)',
               }}>
                 {fileContent || (selectedFile ? '加载中...' : '点击文件查看代码')}
               </pre>

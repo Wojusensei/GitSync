@@ -106,9 +106,9 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
           {activeFile.conflict_blocks.map((block, i) => (
             <div key={i} style={{ marginBottom: 16, border: '1px solid rgba(255,255,255,0.06)', borderRadius: 10, overflow: 'hidden' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 1, background: 'rgba(255,255,255,0.02)' }}>
-                <div style={{ padding: 8, fontSize: 12, color: '#8899aa', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>当前分支 (ours)</div>
-                <div style={{ padding: 8, fontSize: 12, color: '#8899aa', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>合并结果</div>
-                <div style={{ padding: 8, fontSize: 12, color: '#8899aa', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>传入分支 (theirs)</div>
+                <div style={{ padding: 8, fontSize: 12, color: 'var(--text-dim)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>当前分支 (ours)</div>
+                <div style={{ padding: 8, fontSize: 12, color: 'var(--text-dim)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>合并结果</div>
+                <div style={{ padding: 8, fontSize: 12, color: 'var(--text-dim)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>传入分支 (theirs)</div>
 
                 <div style={{ background: 'rgba(244,67,54,0.08)', padding: 10, fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}>
                   {block.ours_text}
@@ -119,7 +119,7 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
                   <textarea
                     value={resolutions[i] || ''}
                     onChange={e => { const newRes = [...resolutions]; newRes[i] = e.target.value; setResolutions(newRes); }}
-                    style={{ width: '100%', minHeight: 80, background: 'transparent', color: '#c8d6e5', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: 6, fontFamily: 'inherit', fontSize: 'inherit', resize: 'vertical' }}
+                    style={{ width: '100%', minHeight: 80, background: 'transparent', color: 'var(--text)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: 6, fontFamily: 'inherit', fontSize: 'inherit', resize: 'vertical' }}
                   />
                 </div>
 

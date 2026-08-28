@@ -144,6 +144,8 @@ function App() {
 
   const [order, setOrder] = useState<number[]>([]);
   const dragConstraintRef = useRef<HTMLDivElement>(null);
+  // 各列表槽位的 DOM 引用：拖拽落点按真实卡片高度计算（卡片高度随消息折行变化，固定 60px 会放错位置）
+  const slotRefs = useRef<Map<number, HTMLElement>>(new Map());
   const mainRef = useRef<HTMLDivElement>(null);
 
   const pointerX = useMotionValue(window.innerWidth / 2);
@@ -324,16 +326,26 @@ function App() {
 
   useEffect(() => {
     setOrder(commits.map((_, i) => i));
+    slotRefs.current.clear();
   }, [commits]);
 
-  const handleDragEnd = (fromIndex: number, info: { offset: { x: number; y: number } }) => {
-    const moveY = info.offset.y;
-    const newOrder = [...order];
-    const toIndex = Math.round(fromIndex + moveY / 60);
-    if (toIndex >= 0 && toIndex < order.length && toIndex !== fromIndex) {
-      const temp = newOrder[fromIndex];
-      newOrder.splice(fromIndex, 1);
-      newOrder.splice(toIndex, 0, temp);
+  const handleDragEnd = (commitIdx: number) => {
+    const fromSlot = order.indexOf(commitIdx);
+    if (fromSlot < 0) return;
+    const draggedEl = slotRefs.current.get(fromSlot);
+    if (!draggedEl) return;
+    const rect = draggedEl.getBoundingClientRect();
+    const centerY = rect.top + rect.height / 2;
+    let toSlot = fromSlot;
+    slotRefs.current.forEach((el, slot) => {
+      if (slot === fromSlot) return;
+      const r = el.getBoundingClientRect();
+      if (centerY >= r.top && centerY <= r.bottom) toSlot = slot;
+    });
+    if (toSlot !== fromSlot) {
+      const newOrder = [...order];
+      const [moved] = newOrder.splice(fromSlot, 1);
+      newOrder.splice(toSlot, 0, moved);
       setOrder(newOrder);
     }
   };
@@ -495,7 +507,7 @@ function App() {
           <h1><SiGit size={22} color="#5B9BD5" /> GitSync</h1>
           <button
             onClick={openFolder}
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '7px 10px', color: '#c8d6e5', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '7px 10px', color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
             title="打开文件夹"
           >
             <VscFolderOpened size={18} />
@@ -523,7 +535,7 @@ function App() {
               {b.name}
             </div>
           )) : (
-            <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, padding: '0 6px' }}>加载仓库后显示</div>
+            <div style={{ color: 'var(--text-dim)', fontSize: 12, padding: '0 6px' }}>加载仓库后显示</div>
           )}
           <div className="separator" />
 
@@ -605,7 +617,7 @@ function App() {
           {commits.length === 0 && !error && !loading && (<div className="empty-state"><VscEmptyWindow size={48} /><p style={{ marginTop: 12 }}>输入仓库路径并加载，查看提交历史</p></div>)}
           <div className="commit-list">
             <AnimatePresence>
-              {order.map((index) => {
+              {order.map((index, slot) => {
                 const c = commits[index];
                 if (!c) return null;
                 const isSelected = selectedCommit === c.hash;
@@ -622,7 +634,8 @@ function App() {
                       drag="y"
                       dragConstraints={dragConstraintRef}
                       dragElastic={0.2}
-                      onDragEnd={(_, info) => handleDragEnd(index, info)}
+                      ref={(el: HTMLDivElement | null) => { if (el) slotRefs.current.set(slot, el); else slotRefs.current.delete(slot); }}
+                      onDragEnd={() => handleDragEnd(index)}
                       whileHover={{ scale: 1.02, boxShadow: '0 12px 30px rgba(0,0,0,0.5)', rotateX: 1, rotateY: -1 }}
                       whileTap={{ scale: 0.98 }}
                       style={{ position: 'relative', transformStyle: 'preserve-3d' }}
@@ -641,7 +654,7 @@ function App() {
                             <div>
                               {/* Header controls for browsing mode */}
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                                <div style={{ fontSize: 14, color: '#dfe6e9', fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
+                                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
                                 {commitDetail.files.length > 1 && (
                                   <div style={{ display: 'flex', gap: 8 }}>
                                     <button
@@ -665,7 +678,7 @@ function App() {
                               {/* Draggable Progress Bar / Range Input for browsing files */}
                               {viewMode === 'single' && commitDetail.files.length > 1 && (
                                 <div className="file-changes-slider-container" style={{ margin: '12px 0 20px 0', padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 8, color: '#dfe6e9' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 8, color: 'var(--text)' }}>
                                     <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>拖拽进度浏览: <strong>{currentFileIndex + 1}</strong> / {commitDetail.files.length}</span>
                                     <span style={{ color: '#5B9BD5', fontWeight: 600, minWidth: 0, flex: 1, wordBreak: 'break-all', lineHeight: 1.5 }} title={commitDetail.files[currentFileIndex]?.path}>{commitDetail.files[currentFileIndex]?.path}</span>
                                   </div>

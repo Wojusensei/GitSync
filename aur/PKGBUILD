@@ -16,11 +16,12 @@ source=(
     "gitsync.desktop"
     "icon.png"
 )
-# 使用makepkg -g生成完整性检查值
+# GitSync 二进制由 CI 按 pkgver 构建覆盖，校验和随版本变化，保持 SKIP；
+# 其余静态文件使用真实校验和（makepkg -g 生成）
 sha256sums=(
     'SKIP'
-    'SKIP'
-    'SKIP'
+    '1dadb9cfe8b48082df3936e51f42ad15caab8784d2e54d96e32497bd36d2bf6c'
+    '1f3689f6374b0553996fdc99743799216703835070145d7f0e6ec11e6280139e'
 )
 
 package() {

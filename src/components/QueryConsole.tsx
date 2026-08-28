@@ -65,13 +65,13 @@ export default function QueryConsole({ repoPath }: { repoPath: string }) {
     <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
       <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         GitSQL 查询
-        <button className="btn" onClick={() => setShowHelp(!showHelp)} style={{ fontSize: 12, padding: '2px 10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: '#8899aa', cursor: 'pointer' }}>
+        <button className="btn" onClick={() => setShowHelp(!showHelp)} style={{ fontSize: 12, padding: '2px 10px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: 'var(--text-dim)', cursor: 'pointer' }}>
           {showHelp ? '隐藏帮助' : '语法帮助'}
         </button>
       </h3>
 
       {showHelp && (
-        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12, color: '#8899aa', maxHeight: 200, overflowY: 'auto' }}>
+        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12, color: 'var(--text-dim)', maxHeight: 200, overflowY: 'auto' }}>
           <div className="section-title" style={{ marginBottom: 8 }}>支持语法</div>
           <div style={{ fontFamily: 'monospace', lineHeight: 1.8 }}>
             <div>SELECT column1, column2, ... FROM table_name</div>
@@ -102,10 +102,10 @@ export default function QueryConsole({ repoPath }: { repoPath: string }) {
         </button>
         {result && (
           <>
-            <span className="time" style={{ fontSize: 12, color: '#8899aa', alignSelf: 'center' }}>
+            <span className="time" style={{ fontSize: 12, color: 'var(--text-dim)', alignSelf: 'center' }}>
               耗时: {result.elapsed_ms}ms | {result.rows.length} 行
             </span>
-            <button className="btn" onClick={exportCSV} style={{ fontSize: 12, padding: '4px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: '#8899aa', cursor: 'pointer' }}>
+            <button className="btn" onClick={exportCSV} style={{ fontSize: 12, padding: '4px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, color: 'var(--text-dim)', cursor: 'pointer' }}>
               导出 CSV
             </button>
           </>

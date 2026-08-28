@@ -16,10 +16,10 @@ export default function WelcomeModal({
   defaultBgBase64,
   bgBase64,
 }: WelcomeModalProps) {
-  if (!isOpen) return null;
-
+  // isOpen 条件放在 AnimatePresence 内部，卸载时才能播放退出动画
   return (
     <AnimatePresence>
+      {isOpen && (
       <motion.div
         className="glass-overlay"
         initial={{ opacity: 0 }}
@@ -66,7 +66,7 @@ export default function WelcomeModal({
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   textAlign: 'center',
-                  color: '#c8d6e5',
+                  color: 'var(--text)',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
@@ -96,7 +96,7 @@ export default function WelcomeModal({
                   />
                 </div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>官方预设</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>蔚蓝档案风格</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>蔚蓝档案风格</div>
               </button>
 
               {/* <^MD2&> */}
@@ -111,7 +111,7 @@ export default function WelcomeModal({
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   textAlign: 'center',
-                  color: '#c8d6e5',
+                  color: 'var(--text)',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
@@ -134,7 +134,7 @@ export default function WelcomeModal({
                   }}
                 />
                 <div style={{ fontWeight: 600, fontSize: 14 }}>MD 纯色</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>Material Design 柔和渐变</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>Material Design 柔和渐变</div>
               </button>
 
               {/* <^自定义&> */}
@@ -149,7 +149,7 @@ export default function WelcomeModal({
                   cursor: 'pointer',
                   transition: 'all 0.25s ease',
                   textAlign: 'center',
-                  color: '#c8d6e5',
+                  color: 'var(--text)',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
@@ -186,7 +186,7 @@ export default function WelcomeModal({
                   )}
                 </div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>自定义图片</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>上传你的背景图</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>上传你的背景图</div>
               </button>
             </div>
           </div>
@@ -219,6 +219,7 @@ export default function WelcomeModal({
           </div>
         </motion.div>
       </motion.div>
+      )}
     </AnimatePresence>
   );
 }
