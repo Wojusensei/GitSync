@@ -590,3 +590,7 @@ input[type="range"]::-moz-range-thumb:hover {
 .file-view-tr:hover {
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* 行内字符级 diff 高亮 */
+.diff-inline-insert{background:rgba(76,175,80,0.35);border-radius:2px}
+.diff-inline-delete{background:rgba(244,67,54,0.35);border-radius:2px;text-decoration:line-through}

@@ -1364,7 +1364,7 @@ fn get_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
     Ok(remotes)
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 struct InlineChange {
     offset: usize,
     length: usize,
@@ -1392,40 +1392,86 @@ struct DiffDetail {
     new_content: String,
     hunks: Vec<DiffHunk>,
 }
-// 修正后的 inline changes 计算函数
-fn compute_inline_changes(old_line: &str, new_line: &str) -> Vec<InlineChange> {
+// 按字符（而非字节）计算新旧行的字词级差异。
+// 返回 (删除段，偏移基于旧行；插入段，偏移基于新行)，供前端做行内高亮
+fn paired_inline_changes(old_line: &str, new_line: &str) -> (Vec<InlineChange>, Vec<InlineChange>) {
     use similar::TextDiff;
-    let mut changes = Vec::new();
-    // 按字符分词比较
+    let mut deletes = Vec::new();
+    let mut inserts = Vec::new();
     let diff = TextDiff::from_words(old_line, new_line);
-    let mut offset = 0;
+    let mut old_off = 0usize;
+    let mut new_off = 0usize;
     for change in diff.iter_all_changes() {
+        let chars = change.as_str().unwrap_or("").chars().count();
         match change.tag() {
             similar::ChangeTag::Equal => {
-                let text = change.as_str().unwrap_or("");
-                offset += text.len();
+                old_off += chars;
+                new_off += chars;
             }
             similar::ChangeTag::Delete => {
-                let text = change.as_str().unwrap_or("");
-                changes.push(InlineChange {
-                    offset,
-                    length: text.len(),
+                deletes.push(InlineChange {
+                    offset: old_off,
+                    length: chars,
                     kind: "delete".to_string(),
                 });
-                // 删除不增加 offset，因为它是删除的字符，在结果中不占位
+                old_off += chars;
             }
             similar::ChangeTag::Insert => {
-                let text = change.as_str().unwrap_or("");
-                changes.push(InlineChange {
-                    offset,
-                    length: text.len(),
+                inserts.push(InlineChange {
+                    offset: new_off,
+                    length: chars,
                     kind: "insert".to_string(),
                 });
-                offset += text.len();
+                new_off += chars;
             }
         }
     }
-    changes
+    (deletes, inserts)
+}
+
+fn whole_line_changes(char_len: usize, kind: &str) -> Vec<InlineChange> {
+    if char_len == 0 {
+        vec![]
+    } else {
+        vec![InlineChange {
+            offset: 0,
+            length: char_len,
+            kind: kind.to_string(),
+        }]
+    }
+}
+
+// 把缓冲的连续 -/+ 行按序号两两配对做字符级 diff，未配对的行整行高亮。
+// 输出顺序保持 diff 原样：先全部删除行，再全部插入行
+fn flush_paired_lines(
+    current_lines: &mut Vec<DiffLine>,
+    minus_buf: &mut Vec<String>,
+    plus_buf: &mut Vec<String>,
+) {
+    for (i, m) in minus_buf.iter().enumerate() {
+        let inline_changes = match plus_buf.get(i) {
+            Some(p) => paired_inline_changes(m, p).0,
+            None => whole_line_changes(m.chars().count(), "delete"),
+        };
+        current_lines.push(DiffLine {
+            origin: "-".to_string(),
+            content: m.clone(),
+            inline_changes,
+        });
+    }
+    for (i, p) in plus_buf.iter().enumerate() {
+        let inline_changes = match minus_buf.get(i) {
+            Some(m) => paired_inline_changes(m, p).1,
+            None => whole_line_changes(p.chars().count(), "insert"),
+        };
+        current_lines.push(DiffLine {
+            origin: "+".to_string(),
+            content: p.clone(),
+            inline_changes,
+        });
+    }
+    minus_buf.clear();
+    plus_buf.clear();
 }
 
 #[tauri::command]
@@ -1466,42 +1512,45 @@ fn get_diff_detail(path: String, commit_hash: String) -> Result<Vec<(String, Dif
             let mut current_old_start = 0usize;
             let mut current_new_start = 0usize;
             let mut current_lines: Vec<DiffLine> = Vec::new();
+            let mut minus_buf: Vec<String> = Vec::new();
+            let mut plus_buf: Vec<String> = Vec::new();
 
             p.print(&mut |_delta, _hunk, line| {
                 match line.origin() {
                     // 'F' = 文件头行，'H' = hunk 头行（@@ -a,b +c,d @@）
                     'F' => {}
                     'H' => {
+                        flush_paired_lines(&mut current_lines, &mut minus_buf, &mut plus_buf);
                         flush_hunk(&mut hunks, &mut current_lines, current_old_start, current_new_start);
                         let header = String::from_utf8_lossy(line.content());
                         let (os, _ol, ns, _nl) = parse_hunk_header(&header);
                         current_old_start = os;
                         current_new_start = ns;
                     }
+                    '+' => {
+                        plus_buf.push(String::from_utf8_lossy(line.content()).to_string());
+                    }
+                    '-' => {
+                        // 新的删除块开始：先结算上一组配对
+                        flush_paired_lines(&mut current_lines, &mut minus_buf, &mut plus_buf);
+                        minus_buf.push(String::from_utf8_lossy(line.content()).to_string());
+                    }
                     origin => {
+                        flush_paired_lines(&mut current_lines, &mut minus_buf, &mut plus_buf);
                         let origin_str = match origin {
-                            '+' => "+",
-                            '-' => "-",
                             ' ' => " ",
                             _ => "?",
                         };
-                        let content = String::from_utf8_lossy(line.content()).to_string();
-                        let inline_changes = if origin == '+' || origin == '-' {
-                            let old_line = if origin == '+' { "" } else { &content };
-                            let new_line = if origin == '+' { &content } else { "" };
-                            compute_inline_changes(old_line, new_line)
-                        } else {
-                            vec![]
-                        };
                         current_lines.push(DiffLine {
                             origin: origin_str.to_string(),
-                            content,
-                            inline_changes,
+                            content: String::from_utf8_lossy(line.content()).to_string(),
+                            inline_changes: vec![],
                         });
                     }
                 }
                 true
             }).map_err(|e| format!("Diff 打印失败: {}", e))?;
+            flush_paired_lines(&mut current_lines, &mut minus_buf, &mut plus_buf);
             flush_hunk(&mut hunks, &mut current_lines, current_old_start, current_new_start);
         }
         results.push((file_path, DiffDetail { old_content, new_content, hunks }));
@@ -2991,5 +3040,50 @@ mod backend_fix_tests {
         std::fs::write(dir.path().join(".git/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
         let hooks = get_hooks(dir.path().to_str().unwrap().to_string()).unwrap();
         assert_eq!(hooks, vec!["pre-commit".to_string()]);
+    }
+
+    #[test]
+    fn inline_changes_are_char_based_and_partial() {
+        // 行内 diff 应只标记变化部分，而非整行
+        let (del, ins) = paired_inline_changes("const a = 1;", "const a = 2;");
+        let whole = "const a = 1;".chars().count();
+        assert!(
+            del.iter().map(|c| c.length).sum::<usize>() < whole,
+            "删除段应小于整行: {:?}", del
+        );
+        assert!(
+            ins.iter().map(|c| c.length).sum::<usize>() < whole,
+            "插入段应小于整行: {:?}", ins
+        );
+        // 偏移量按字符计而非字节：多字节字符后的插入点应为 3（字节会是 9）
+        let (_, ins2) = paired_inline_changes("ab 你好", "ab 你好x");
+        assert_eq!(ins2[0].offset, 3);
+        assert_eq!(ins2[0].length, 3);
+    }
+
+    #[test]
+    fn diff_detail_provides_paired_inline_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        commit(&repo, "base", 1_700_000_000, &[("a.txt", "const a = 1;\nconst b = 2;\n")]);
+        let second = commit(&repo, "change b", 1_700_000_100, &[("a.txt", "const a = 1;\nconst b = 3;\n")]);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let files = get_diff_detail(path, second).unwrap();
+        let lines = &files[0].1.hunks[0].lines;
+        let minus = lines.iter().find(|l| l.origin == "-").expect("应有删除行");
+        let plus = lines.iter().find(|l| l.origin == "+").expect("应有插入行");
+        assert_eq!(minus.content.trim_end(), "const b = 2;");
+        let whole = minus.content.trim_end().chars().count();
+        assert!(
+            minus.inline_changes.iter().map(|c| c.length).sum::<usize>() < whole,
+            "删除行应有行内级标记而非整行: {:?}", minus.inline_changes
+        );
+        assert!(
+            plus.inline_changes.iter().map(|c| c.length).sum::<usize>() < whole,
+            "插入行应有行内级标记而非整行: {:?}", plus.inline_changes
+        );
+        // 上下文行不带行内标记
+        assert!(lines.iter().filter(|l| l.origin == " ").all(|l| l.inline_changes.is_empty()));
     }
 }
