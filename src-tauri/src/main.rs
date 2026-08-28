@@ -238,9 +238,11 @@ fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDetail, 
             _ => "?",
         };
 
+        // 删除的文件 new_file 路径为 None，回退到 old_file，否则显示为「未知文件」
         let path = delta
             .new_file()
             .path()
+            .or_else(|| delta.old_file().path())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "未知文件".into());
 
@@ -418,9 +420,11 @@ fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTimeline
 
         let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
         for (idx, delta) in deltas.iter().enumerate() {
+            // 删除的文件 new_file 路径为 None，回退到 old_file
             let delta_path = delta
                 .new_file()
                 .path()
+                .or_else(|| delta.old_file().path())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
@@ -975,24 +979,54 @@ fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, Str
 
         let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
         for (idx, delta) in deltas.iter().enumerate() {
-            let path = delta.new_file().path().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
 
             let patch = git2::Patch::from_diff(&diff, idx)
                 .map_err(|e| format!("Patch 创建失败: {}", e))?;
             if let Some(mut p) = patch {
-                let mut line_number = 0usize;
+                // 用 hunk 头的起始行号推算真实文件行号
+                let mut old_ln = 0usize;
+                let mut new_ln = 0usize;
                 p.print(&mut |_delta, _hunk, line| {
-                    let content = std::str::from_utf8(line.content()).unwrap_or("");
-                    if content.to_lowercase().contains(&query_lower) {
-                        line_number += 1;
-                        results.push(SearchResult {
-                            commit_hash: oid.to_string(),
-                            author: commit.author().name().unwrap_or("未知").to_string(),
-                            time: "".to_string(),
-                            file_path: path.clone(),
-                            line_number,
-                            content: content.to_string(),
-                        });
+                    match line.origin() {
+                        'H' => {
+                            let header = String::from_utf8_lossy(line.content());
+                            let (os, _ol, ns, _nl) = parse_hunk_header(&header);
+                            old_ln = os;
+                            new_ln = ns;
+                        }
+                        'F' => {}
+                        origin => {
+                            let content = std::str::from_utf8(line.content()).unwrap_or("");
+                            if content.to_lowercase().contains(&query_lower) {
+                                let line_number = match origin {
+                                    '-' => old_ln,
+                                    _ => new_ln,
+                                };
+                                results.push(SearchResult {
+                                    commit_hash: oid.to_string(),
+                                    author: commit.author().name().unwrap_or("未知").to_string(),
+                                    time: "".to_string(),
+                                    file_path: path.clone(),
+                                    line_number,
+                                    content: content.to_string(),
+                                });
+                            }
+                            match origin {
+                                '-' => old_ln += 1,
+                                '+' => new_ln += 1,
+                                ' ' => {
+                                    old_ln += 1;
+                                    new_ln += 1;
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                     true
                 }).ok();
@@ -1168,15 +1202,65 @@ fn get_file_tree(path: String) -> Result<Vec<TreeNode>, String> {
 }
 
 #[tauri::command]
-fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, _file_path: Option<String>) -> Result<Vec<Commit>, String> {
-    let all = get_commits(path)?;
+fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, file_path: Option<String>) -> Result<Vec<Commit>, String> {
+    let all = get_commits(path.clone())?;
     let filtered: Vec<Commit> = all.into_iter().filter(|c| {
         if let Some(ref a) = author { if !c.author.to_lowercase().contains(&a.to_lowercase()) { return false; } }
         if let Some(ref df) = date_from { if c.time < *df { return false; } }
-        if let Some(ref dt) = date_to { if c.time > *dt { return false; } }
+        if let Some(ref dt) = date_to {
+            // 裸日期补到当天末尾比较，否则当天提交会被排除
+            let bound = if dt.len() == 10 { format!("{} 23:59:59", dt) } else { dt.clone() };
+            if c.time > bound { return false; }
+        }
         true
     }).collect();
+
+    // 文件路径筛选：先收集改动过该文件的提交集合，再交集过滤
+    if let Some(ref fp) = file_path {
+        if !fp.trim().is_empty() {
+            let expanded = shellexpand::tilde(&path).to_string();
+            let repo = Repository::open(Path::new(&expanded))
+                .map_err(|e| format!("无法打开仓库: {}", e))?;
+            let touching = commits_touching_file(&repo, fp.trim(), 2000)?;
+            return Ok(filtered.into_iter().filter(|c| touching.contains(&c.hash)).collect());
+        }
+    }
     Ok(filtered)
+}
+
+// 遍历历史，返回改动过指定文件的提交哈希集合（上限 limit 个提交）
+fn commits_touching_file(repo: &Repository, file_path: &str, limit: usize) -> Result<std::collections::HashSet<String>, String> {
+    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
+    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
+
+    let mut set = std::collections::HashSet::new();
+    let mut processed = 0usize;
+    for oid in revwalk {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+        let tree = commit.tree().map_err(|e| format!("无法获取树: {}", e))?;
+        let parent_tree = commit.parents().next().and_then(|p| p.tree().ok());
+        if let Ok(diff) = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) {
+            for delta in diff.deltas() {
+                let hit = delta
+                    .new_file()
+                    .path()
+                    .or_else(|| delta.old_file().path())
+                    .map(|p| p.to_string_lossy() == file_path)
+                    .unwrap_or(false);
+                if hit {
+                    set.insert(oid.to_string());
+                    break;
+                }
+            }
+        }
+        processed += 1;
+        if processed >= limit {
+            break;
+        }
+    }
+    Ok(set)
 }
 
 #[derive(Serialize)]
@@ -1310,85 +1394,107 @@ fn get_diff_detail(path: String, commit_hash: String) -> Result<Vec<(String, Dif
     let mut results = Vec::new();
 
     for (idx, delta) in deltas.iter().enumerate() {
-        let file_path = delta.new_file().path().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        let old_content = if let Some(parent_tree) = parent_tree.as_ref() {
-            parent_tree.get_path(Path::new(&file_path)).ok().and_then(|e| repo.find_blob(e.id()).ok()).map(|b| String::from_utf8_lossy(b.content()).to_string()).unwrap_or_default()
-        } else { String::new() };
-        let new_content = tree.get_path(Path::new(&file_path)).ok().and_then(|e| repo.find_blob(e.id()).ok()).map(|b| String::from_utf8_lossy(b.content()).to_string()).unwrap_or_default();
+        // 删除的文件 new_file 路径为 None，回退到 old_file，否则显示为「未知文件」
+        let new_path = delta.new_file().path();
+        let old_path = delta.old_file().path();
+        let file_path = new_path
+            .or(old_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let old_content = match (parent_tree.as_ref(), old_path) {
+            (Some(pt), Some(op)) => pt.get_path(op).ok().and_then(|e| repo.find_blob(e.id()).ok()).map(|b| String::from_utf8_lossy(b.content()).to_string()).unwrap_or_default(),
+            _ => String::new(),
+        };
+        let new_content = new_path
+            .and_then(|np| tree.get_path(np).ok())
+            .and_then(|e| repo.find_blob(e.id()).ok())
+            .map(|b| String::from_utf8_lossy(b.content()).to_string())
+            .unwrap_or_default();
 
         let patch = git2::Patch::from_diff(&diff, idx).map_err(|e| format!("Patch 创建失败: {}", e))?;
         let mut hunks = Vec::new();
         if let Some(mut p) = patch {
-            let mut current_old_start = 0;
-            let mut current_new_start = 0;
-            let mut current_lines = Vec::new();
+            let mut current_old_start = 0usize;
+            let mut current_new_start = 0usize;
+            let mut current_lines: Vec<DiffLine> = Vec::new();
 
-            p.print(&mut |_delta, hunk, line| {
-                if let Some(hunk) = hunk {
-                    if !current_lines.is_empty() {
-                        hunks.push(DiffHunk {
-                            old_start: current_old_start,
-                            old_lines: 0,
-                            new_start: current_new_start,
-                            new_lines: 0,
-                            lines: current_lines.clone(),
-                        });
-                        current_lines.clear();
+            p.print(&mut |_delta, _hunk, line| {
+                match line.origin() {
+                    // 'F' = 文件头行，'H' = hunk 头行（@@ -a,b +c,d @@）
+                    'F' => {}
+                    'H' => {
+                        flush_hunk(&mut hunks, &mut current_lines, current_old_start, current_new_start);
+                        let header = String::from_utf8_lossy(line.content());
+                        let (os, _ol, ns, _nl) = parse_hunk_header(&header);
+                        current_old_start = os;
+                        current_new_start = ns;
                     }
-                    let header = String::from_utf8_lossy(hunk.header()).to_string();
-                    let (os, _ol, ns, _nl) = parse_hunk_header(&header);
-                    current_old_start = os;
-                    current_new_start = ns;
-                } else {
-                    let origin = match line.origin() {
-                        '+' => "+",
-                        '-' => "-",
-                        ' ' => " ",
-                        _ => "?",
-                    };
-                    let content = String::from_utf8_lossy(line.content()).to_string();
-                    let inline_changes = if origin == "+" || origin == "-" {
-                        let old_line = if origin == "+" { "" } else { &content };
-                        let new_line = if origin == "+" { &content } else { "" };
-                        compute_inline_changes(old_line, new_line)
-                    } else {
-                        vec![]
-                    };
-                    current_lines.push(DiffLine {
-                        origin: origin.to_string(),
-                        content: content.clone(),
-                        inline_changes,
-                    });
+                    origin => {
+                        let origin_str = match origin {
+                            '+' => "+",
+                            '-' => "-",
+                            ' ' => " ",
+                            _ => "?",
+                        };
+                        let content = String::from_utf8_lossy(line.content()).to_string();
+                        let inline_changes = if origin == '+' || origin == '-' {
+                            let old_line = if origin == '+' { "" } else { &content };
+                            let new_line = if origin == '+' { &content } else { "" };
+                            compute_inline_changes(old_line, new_line)
+                        } else {
+                            vec![]
+                        };
+                        current_lines.push(DiffLine {
+                            origin: origin_str.to_string(),
+                            content,
+                            inline_changes,
+                        });
+                    }
                 }
                 true
             }).map_err(|e| format!("Diff 打印失败: {}", e))?;
-
-            if !current_lines.is_empty() {
-                hunks.push(DiffHunk {
-                    old_start: current_old_start,
-                    old_lines: 0,
-                    new_start: current_new_start,
-                    new_lines: 0,
-                    lines: current_lines,
-                });
-            }
+            flush_hunk(&mut hunks, &mut current_lines, current_old_start, current_new_start);
         }
         results.push((file_path, DiffDetail { old_content, new_content, hunks }));
     }
     Ok(results)
 }
 
+// 把累积的行作为一个 hunk 收尾，old_lines/new_lines 按 origin 实际统计
+fn flush_hunk(hunks: &mut Vec<DiffHunk>, lines: &mut Vec<DiffLine>, old_start: usize, new_start: usize) {
+    if lines.is_empty() {
+        return;
+    }
+    let old_lines = lines.iter().filter(|l| l.origin == "-" || l.origin == " ").count();
+    let new_lines = lines.iter().filter(|l| l.origin == "+" || l.origin == " ").count();
+    hunks.push(DiffHunk {
+        old_start,
+        old_lines,
+        new_start,
+        new_lines,
+        lines: std::mem::take(lines),
+    });
+}
+
 fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
+    // 头格式: "@@ -old_start,old_lines +new_start,new_lines @@ 上下文"
     let parts: Vec<&str> = header.split_whitespace().collect();
-    if parts.len() < 4 { return (0, 0, 0, 0); }
-    let old = parts[0].trim_start_matches("@@").trim();
-    let new = parts[2].trim();
-    let old_parts: Vec<&str> = old.split(',').collect();
-    let new_parts: Vec<&str> = new.split(',').collect();
-    let old_start = old_parts[0].parse::<isize>().unwrap_or(0).unsigned_abs();
-    let old_lines = if old_parts.len() > 1 { old_parts[1].parse().unwrap_or(0) } else { 1 };
-    let new_start = new_parts[0].parse::<isize>().unwrap_or(0).unsigned_abs();
-    let new_lines = if new_parts.len() > 1 { new_parts[1].parse().unwrap_or(0) } else { 1 };
+    if parts.len() < 4 {
+        return (0, 0, 0, 0);
+    }
+    let parse_range = |s: &str, sign: char| -> (usize, usize) {
+        let s = s.trim_start_matches(sign);
+        match s.split_once(',') {
+            Some((start, count)) => (
+                start.parse::<isize>().unwrap_or(0).unsigned_abs(),
+                count.parse::<usize>().unwrap_or(1),
+            ),
+            None => (s.parse::<isize>().unwrap_or(0).unsigned_abs(), 1),
+        }
+    };
+    // parts[0] 是 "@@"，区间在 parts[1]（旧）与 parts[2]（新）
+    let (old_start, old_lines) = parse_range(parts[1], '-');
+    let (new_start, new_lines) = parse_range(parts[2], '+');
     (old_start, old_lines, new_start, new_lines)
 }
 
@@ -2030,8 +2136,10 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
     let message = commit.message().unwrap_or("").to_string();
 
     let mut files = Vec::new();
-    tree.walk(git2::TreeWalkMode::PreOrder, |_, entry| {
+    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
         let name = entry.name().unwrap_or("未知");
+        // walk 回调的 root 是带尾斜杠的父目录前缀（顶层为空串），直接拼接即完整路径
+        let full_path = format!("{}{}", root, name);
         let kind = entry.kind();
         let is_dir = kind == Some(git2::ObjectType::Tree);
         let size = if is_dir {
@@ -2040,7 +2148,7 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
             repo.find_blob(entry.id()).map(|b| b.size()).unwrap_or(0)
         };
         files.push(TimeMachineFile {
-            path: name.to_string(),
+            path: full_path,
             size,
             is_directory: is_dir,
         });
@@ -2526,5 +2634,162 @@ mod path_safety_tests {
         // 目录外/不存在的脚本一律拒绝，绝不执行
         assert!(run_script(repo_str.clone(), "../../usr/bin/env".to_string()).is_err());
         assert!(run_script(repo_str, "/bin/sh".to_string()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod backend_fix_tests {
+    use super::*;
+
+    fn commit(repo: &git2::Repository, msg: &str, time_secs: i64, files: &[(&str, &str)]) -> String {
+        let sig = git2::Signature::new("alice", "a@b.c", &git2::Time::new(time_secs, 0)).unwrap();
+        fn build(repo: &git2::Repository, files: &[(&str, &str)]) -> Result<git2::Oid, git2::Error> {
+            let mut tb = repo.treebuilder(None)?;
+            let mut dirs: std::collections::BTreeMap<String, Vec<(&str, &str)>> = std::collections::BTreeMap::new();
+            for (path, content) in files {
+                match path.split_once('/') {
+                    Some((dir, rest)) => dirs.entry(dir.to_string()).or_default().push((rest, content)),
+                    None => {
+                        let blob = repo.blob(content.as_bytes())?;
+                        tb.insert(path, blob, 0o100644)?;
+                    }
+                }
+            }
+            for (dir, sub) in dirs {
+                let sub_id = build(repo, &sub)?;
+                tb.insert(&dir, sub_id, 0o040000)?;
+            }
+            tb.write()
+        }
+        let tree_id = build(repo, files).unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let owned_parents: Vec<git2::Commit> = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| vec![c])
+            .unwrap_or_default();
+        let parents: Vec<&git2::Commit> = owned_parents.iter().collect();
+        let oid = repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parents).unwrap();
+        oid.to_string()
+    }
+
+    #[test]
+    fn parse_hunk_header_basic() {
+        assert_eq!(parse_hunk_header("@@ -5,7 +5,8 @@ fn main() {"), (5, 7, 5, 8));
+        assert_eq!(parse_hunk_header("@@ -0,0 +1,3 @@"), (0, 0, 1, 3));
+        assert_eq!(parse_hunk_header("@@ -3 +3 @@"), (3, 1, 3, 1));
+    }
+
+    #[test]
+    fn diff_detail_splits_two_hunks_with_real_line_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base_lines: String = (1..=12).map(|i| format!("line{}\n", i)).collect();
+        let base = commit(&repo, "base", 1_700_000_000, &[("a.txt", &base_lines)]);
+        // 修改第 2 行和第 11 行 → 应产生两个独立 hunk
+        let modified = [
+            "line1\n", "line2-changed\n", "line3\n", "line4\n", "line5\n", "line6\n",
+            "line7\n", "line8\n", "line9\n", "line10\n", "line11-changed\n", "line12\n",
+        ]
+        .concat();
+        let second = commit(&repo, "two changes", 1_700_000_100, &[("a.txt", &modified)]);
+        let _ = base;
+
+        let path = dir.path().to_str().unwrap().to_string();
+        let files = get_diff_detail(path, second).unwrap();
+        assert_eq!(files.len(), 1);
+        let (_, detail) = &files[0];
+        assert_eq!(detail.hunks.len(), 2, "两处不相邻的修改应切成两个 hunk");
+        let h1 = &detail.hunks[0];
+        let h2 = &detail.hunks[1];
+        assert_eq!(h1.new_start, 1);
+        assert_eq!(h1.old_lines, h1.lines.iter().filter(|l| l.origin == "-" || l.origin == " ").count(), "old_lines 应按实际行数统计");
+        assert_eq!(h1.new_lines, h1.lines.iter().filter(|l| l.origin == "+" || l.origin == " ").count());
+        assert!(h2.old_lines > 0, "old_lines 不应再硬编码为 0");
+        assert_eq!(h2.new_start, 8);
+    }
+
+    #[test]
+    fn deleted_file_reports_old_path_and_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit(&repo, "base", 1_700_000_000, &[("b.txt", "bye\n"), ("keep.txt", "x\n")]);
+        let second = commit(&repo, "delete b", 1_700_000_100, &[("keep.txt", "x\n")]);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let detail = get_commit_detail(path.clone(), second.clone()).unwrap();
+        let deleted = detail.files.iter().find(|f| f.status == "D").expect("应有删除条目");
+        assert_eq!(deleted.path, "b.txt", "删除文件应显示原路径而非「未知文件」");
+
+        let files = get_diff_detail(path, second).unwrap();
+        let (fp, d) = files.iter().find(|(p, _)| p == "b.txt").expect("应包含 b.txt");
+        assert_eq!(fp, "b.txt");
+        assert_eq!(d.old_content, "bye\n");
+        assert_eq!(d.new_content, "");
+        let _ = base;
+    }
+
+    #[test]
+    fn filter_commits_date_to_is_inclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        commit(&repo, "day one", 1_760_000_000, &[("a.txt", "1\n")]);
+        commit(&repo, "day two", 1_760_086_400, &[("a.txt", "2\n")]);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        // 1_760_086_400 = 2025-10-10 (UTC)。结束日期当天的提交应被保留
+        let res = filter_commits(path.clone(), None, None, Some("2025-10-10".into()), None).unwrap();
+        assert_eq!(res.len(), 2, "date_to 当天的提交不应被排除");
+        let res = filter_commits(path.clone(), None, None, Some("2025-10-09".into()), None).unwrap();
+        assert_eq!(res.len(), 1);
+    }
+
+    #[test]
+    fn filter_commits_by_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit(&repo, "base", 1_700_000_000, &[("a.txt", "1\n"), ("b.txt", "1\n")]);
+        let c2 = commit(&repo, "touch a", 1_700_000_100, &[("a.txt", "2\n"), ("b.txt", "1\n")]);
+        let c3 = commit(&repo, "touch b", 1_700_000_200, &[("a.txt", "2\n"), ("b.txt", "2\n")]);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        // 与 git log -- a.txt 语义一致：创建该文件的提交也算「改过」
+        let res = filter_commits(path, None, None, None, Some("a.txt".into())).unwrap();
+        let hashes: std::collections::HashSet<String> = res.iter().map(|c| c.hash.clone()).collect();
+        assert_eq!(hashes, [base, c2].into_iter().collect());
+        assert!(!hashes.contains(&c3), "只改 b.txt 的提交不应命中");
+    }
+
+    #[test]
+    fn semantic_search_reports_real_line_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        commit(&repo, "base", 1_700_000_000, &[("a.txt", "alpha\nbeta\n")]);
+        commit(&repo, "add needle at line 3", 1_700_000_100, &[("a.txt", "alpha\nbeta\nneedle\n")]);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let res = semantic_search(path, "needle".into()).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].line_number, 3, "应报告真实行号而非匹配序号");
+        assert_eq!(res[0].file_path, "a.txt");
+    }
+
+    #[test]
+    fn time_machine_lists_full_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let head = commit(&repo, "nested", 1_700_000_000, &[("docs/guide/intro.md", "hi\n"), ("root.txt", "r\n")]);
+        let head_time = 1_700_000_000i64;
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let snap = get_time_machine_snapshot(path, head_time).unwrap();
+        assert_eq!(snap.commit_hash, head);
+        assert!(
+            snap.files.iter().any(|f| f.path == "docs/guide/intro.md"),
+            "应保留完整相对路径，实际: {:?}",
+            snap.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>()
+        );
+        assert!(snap.files.iter().any(|f| f.path == "docs"));
     }
 }
