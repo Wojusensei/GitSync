@@ -2085,9 +2085,6 @@ async fn open_folder_dialog(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 fn main() {
-    unsafe {
-        let _ = git2::opts::set_verify_owner_validation(false);
-    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
