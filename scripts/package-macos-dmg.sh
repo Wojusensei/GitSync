@@ -24,9 +24,12 @@ if [ -n "$TARGET" ]; then
 fi
 
 SIGNED=0
-APPLE_ID="${APPLE_ID:-}"
-APPLE_PASSWORD="${APPLE_PASSWORD:-}"
-APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
+# 公证凭据先转存为 NOTARY_*：下方 unset APPLE_ID 等是为了避免 Tauri CLI
+# 在 build 时自动公证，凭据留给本脚本最后统一使用。
+# 此前实现先 unset 再检查同名变量，导致配置了 secrets 也必然在公证前退出。
+NOTARY_APPLE_ID="${APPLE_ID:-}"
+NOTARY_APPLE_PASSWORD="${APPLE_PASSWORD:-}"
+NOTARY_APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
 if [ -n "${APPLE_CERTIFICATE:-}" ]; then
   SIGNED=1
   export APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
@@ -35,7 +38,6 @@ if [ -n "${APPLE_CERTIFICATE:-}" ]; then
   else
     unset APPLE_SIGNING_IDENTITY
   fi
-  # Tauri 会在 build 时签名，DMG 的公证放到最后统一处理。
   unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
 else
   unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
@@ -50,6 +52,25 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
+# 公证 .app 本体（Apple 推荐）：先公证并 staple，用户把应用从 DMG
+# 复制出来后离线也能通过 Gatekeeper 校验
+if [ "$SIGNED" -eq 1 ]; then
+  if [ -z "$NOTARY_APPLE_ID" ] || [ -z "$NOTARY_APPLE_PASSWORD" ] || [ -z "$NOTARY_APPLE_TEAM_ID" ]; then
+    echo "::error::APPLE_CERTIFICATE 已配置，但缺少 APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID，无法公证"
+    exit 1
+  fi
+  APP_ZIP="$BUNDLE_DIR/macos/GitSync-notarize.zip"
+  ditto -c -k --keepParent "$APP_PATH" "$APP_ZIP"
+  xcrun notarytool submit "$APP_ZIP" \
+    --apple-id "$NOTARY_APPLE_ID" \
+    --password "$NOTARY_APPLE_PASSWORD" \
+    --team-id "$NOTARY_APPLE_TEAM_ID" \
+    --wait
+  rm -f "$APP_ZIP"
+  xcrun stapler staple "$APP_PATH"
+  xcrun stapler validate "$APP_PATH"
+fi
+
 STAGING=$(mktemp -d)
 trap 'rm -rf "$STAGING"' EXIT
 ditto "$APP_PATH" "$STAGING/GitSync.app"
@@ -60,13 +81,15 @@ hdiutil create -volname GitSync -srcfolder "$STAGING" -ov -format UDZO -imagekey
 rm -rf "$STAGING"
 trap - EXIT
 
+# DMG 同样公证并 staple（凭据已在应用公证前校验过）
 if [ "$SIGNED" -eq 1 ]; then
-  if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
-    echo "::error::APPLE_CERTIFICATE 已配置，但缺少 APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID，无法公证"
-    exit 1
-  fi
-  xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+  xcrun notarytool submit "$DMG" \
+    --apple-id "$NOTARY_APPLE_ID" \
+    --password "$NOTARY_APPLE_PASSWORD" \
+    --team-id "$NOTARY_APPLE_TEAM_ID" \
+    --wait
   xcrun stapler staple "$DMG"
+  xcrun stapler validate "$DMG"
 fi
 
 echo "DMG: $DMG"
