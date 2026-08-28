@@ -421,7 +421,7 @@ async fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTi
 
 // 全历史逐提交做 diff，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn get_file_timeline_impl(repo: &Repository, file_path: &str) -> Result<Vec<FileTimelineEntry>, String> {
-    let mut revwalk = sorted_revwalk(repo)?;
+    let revwalk = sorted_revwalk(repo)?;
 
     let mut entries = Vec::new();
 
@@ -581,7 +581,7 @@ async fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
 
 // 逐提交做 diff 统计，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn get_contributors_impl(repo: &Repository) -> Result<Vec<Contributor>, String> {
-    let mut revwalk = sorted_revwalk(repo)?;
+    let revwalk = sorted_revwalk(repo)?;
 
     let mut contributors: std::collections::HashMap<String, (String, usize, usize, usize)> = std::collections::HashMap::new();
     let mut processed = 0usize;
@@ -656,7 +656,7 @@ async fn get_hot_files(path: String) -> Result<Vec<HotFile>, String> {
 
 // 逐提交做 diff 统计，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn get_hot_files_impl(repo: &Repository) -> Result<Vec<HotFile>, String> {
-    let mut revwalk = sorted_revwalk(repo)?;
+    let revwalk = sorted_revwalk(repo)?;
 
     let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut processed = 0;
@@ -1008,7 +1008,7 @@ async fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult
 
 // 全历史逐提交逐行扫描，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn semantic_search_impl(repo: &Repository, query: &str) -> Result<Vec<SearchResult>, String> {
-    let mut revwalk = sorted_revwalk(repo)?;
+    let revwalk = sorted_revwalk(repo)?;
 
     let mut results = Vec::new();
     let query_lower = query.to_lowercase();

@@ -8,7 +8,7 @@ An interactive Git history browser that visualizes commit graphs, branches, diff
 
 🌐 Supports macOS, Windows, and most Linux distributions. Built with Rust + Tauri for blazing performance 💥
 
-Current version: 0.3.2
+Current version: 0.3.3
 
 ## ✨ Features
 
@@ -69,27 +69,27 @@ Get the latest installer from the [Releases](https://github.com/Wojusensei/GitSy
 
 ### macOS
 
-[GitSync_0.3.2_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync_0.3.2_aarch64.dmg)
+[GitSync_0.3.3_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.3.3/GitSync_0.3.3_aarch64.dmg)
 
 ### Windows
 
-[GitSync_0.3.2_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync_0.3.2_x64-setup.exe)
+[GitSync_0.3.3_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.3.3/GitSync_0.3.3_x64-setup.exe)
 
 ### Linux (Debian / Ubuntu)
 
-[GitSync_0.3.2_amd64.deb](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync_0.3.2_amd64.deb)
+[GitSync_0.3.3_amd64.deb](https://github.com/Wojusensei/GitSync/releases/download/v0.3.3/GitSync_0.3.3_amd64.deb)
 
 ### Linux (Fedora / RHEL)
 
-[GitSync-0.3.2-1.x86_64.rpm](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync-0.3.2-1.x86_64.rpm)
+[GitSync-0.3.3-1.x86_64.rpm](https://github.com/Wojusensei/GitSync/releases/download/v0.3.3/GitSync-0.3.3-1.x86_64.rpm)
 
 ### Linux (generic tar.gz)
 
-[GitSync-0.3.2-linux-x86_64.tar.gz.zip](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/GitSync-0.3.2-linux-x86_64.tar.gz.zip)
+[GitSync-0.3.3-linux-x86_64.tar.gz.zip](https://github.com/Wojusensei/GitSync/releases/download/v0.3.3/GitSync-0.3.3-linux-x86_64.tar.gz.zip)
 
 ### Arch Linux
 
-[gitsync-0.3.2-1-x86_64.pkg.tar.zst](https://github.com/Wojusensei/GitSync/releases/download/v0.3.2/gitsync-0.3.2-1-x86_64.pkg.tar.zst)
+[gitsync-0.3.3-1-x86_64.pkg.tar.zst](https://github.com/Wojusensei/GitSync/releases/download/v0.3.3/gitsync-0.3.3-1-x86_64.pkg.tar.zst)
 
 ## 😋 Installation
 
@@ -104,25 +104,25 @@ Double-click the `.exe` installer and follow the prompts.
 ### Linux (Debian / Ubuntu)
 
 ```bash
-sudo dpkg -i GitSync_0.3.2_amd64.deb
+sudo dpkg -i GitSync_0.3.3_amd64.deb
 ```
 
 ### Linux (Fedora / RHEL)
 
 ```bash
-sudo rpm -ivh GitSync-0.3.2-1.x86_64.rpm
+sudo rpm -ivh GitSync-0.3.3-1.x86_64.rpm
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -U gitsync-0.3.2-1-x86_64.pkg.tar.zst
+sudo pacman -U gitsync-0.3.3-1-x86_64.pkg.tar.zst
 ```
 
 ### Linux (generic tar.gz)
 
 ```bash
-tar -xzvf GitSync-0.3.2-linux-x86_64.tar.gz
+tar -xzvf GitSync-0.3.3-linux-x86_64.tar.gz
 ./GitSync
 ```
 
