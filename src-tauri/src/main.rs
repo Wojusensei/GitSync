@@ -3,8 +3,43 @@
 use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri_plugin_dialog::DialogExt;
+
+// 校验来自前端的相对路径：拒绝绝对路径、`..` 等非普通组件，防止目录穿越。
+// 返回仅含普通组件的相对路径，可安全 join 到受信目录下。
+fn safe_relative_path(untrusted: &str) -> Result<PathBuf, String> {
+    let path = Path::new(untrusted);
+    if path.is_absolute() {
+        return Err(format!("拒绝绝对路径: {}", untrusted));
+    }
+    let mut cleaned = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::Normal(part) => cleaned.push(part),
+            _ => return Err(format!("路径包含非法组件: {}", untrusted)),
+        }
+    }
+    if cleaned.as_os_str().is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    Ok(cleaned)
+}
+
+// 在 base 下解析一个必须已存在的文件：canonicalize 后确保没有逃出 base（防符号链接穿越）。
+fn resolve_existing_under(base: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let base_canonical = base
+        .canonicalize()
+        .map_err(|e| format!("无法解析目录 {}: {}", base.display(), e))?;
+    let target = base.join(relative);
+    let canonical = target
+        .canonicalize()
+        .map_err(|e| format!("路径无效: {}", e))?;
+    if !canonical.starts_with(&base_canonical) {
+        return Err("拒绝访问目标目录之外的文件".into());
+    }
+    Ok(canonical)
+}
 
 #[derive(Serialize, Clone)]
 struct Commit {
@@ -1385,14 +1420,49 @@ fn get_hooks(path: String) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn get_hook_content(path: String, hook_name: String) -> Result<String, String> {
-    let hook_path = format!("{}/.git/hooks/{}", shellexpand::tilde(&path), hook_name);
+    let expanded = shellexpand::tilde(&path).to_string();
+    let hooks_dir = Path::new(&expanded).join(".git").join("hooks");
+    let relative = safe_relative_path(&hook_name)?;
+    let hook_path = resolve_existing_under(&hooks_dir, &relative)?;
     std::fs::read_to_string(&hook_path).map_err(|e| format!("读取失败: {}", e))
 }
 
 #[tauri::command]
 fn save_hook_content(path: String, hook_name: String, content: String) -> Result<(), String> {
-    let hook_path = format!("{}/.git/hooks/{}", shellexpand::tilde(&path), hook_name);
+    let expanded = shellexpand::tilde(&path).to_string();
+    let hooks_dir = Path::new(&expanded).join(".git").join("hooks");
+    let relative = safe_relative_path(&hook_name)?;
+    let hooks_canonical = hooks_dir
+        .canonicalize()
+        .map_err(|e| format!("hooks 目录不可用: {}", e))?;
+    let hook_path = hooks_canonical.join(&relative);
+    // hooks 目录是平铺的：多级路径的中间目录必须已存在，否则拒绝
+    if let Some(parent) = hook_path.parent() {
+        if !parent.is_dir() {
+            return Err("hook 路径无效".into());
+        }
+    }
+    // 已存在的同名文件若是指向目录外的符号链接，拒绝写入
+    if hook_path.exists() {
+        let canonical = hook_path
+            .canonicalize()
+            .map_err(|e| format!("路径无效: {}", e))?;
+        if !canonical.starts_with(&hooks_canonical) {
+            return Err("拒绝写入 hooks 目录之外的文件".into());
+        }
+    }
     std::fs::write(&hook_path, content).map_err(|e| format!("写入失败: {}", e))?;
+    // 新建的 hook 需要 +x 才会被 git 执行
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path)
+            .map_err(|e| format!("读取权限失败: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms)
+            .map_err(|e| format!("设置执行权限失败: {}", e))?;
+    }
     Ok(())
 }
 
@@ -1532,7 +1602,8 @@ fn get_conflict_detail(path: String) -> Result<Vec<ConflictDetail>, String> {
 #[tauri::command]
 fn resolve_conflict(path: String, file_path: String, resolutions: Vec<String>) -> Result<(), String> {
     let expanded = shellexpand::tilde(&path).to_string();
-    let full_path = Path::new(&expanded).join(&file_path);
+    let relative = safe_relative_path(&file_path)?;
+    let full_path = resolve_existing_under(Path::new(&expanded), &relative)?;
     let content = std::fs::read_to_string(&full_path)
         .map_err(|e| format!("读取失败: {}", e))?;
     let parsed = parse_conflict_content(&content);
@@ -1600,8 +1671,9 @@ fn list_scripts() -> Result<Vec<String>, String> {
 fn run_script(path: String, script_name: String) -> Result<String, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let scripts_dir = shellexpand::tilde("~/.git-tool/scripts").to_string();
-    let script_path = format!("{}/{}", scripts_dir, script_name);
-    
+    let relative = safe_relative_path(&script_name)?;
+    let script_path = resolve_existing_under(Path::new(&scripts_dir), &relative)?;
+
     let output = std::process::Command::new(&script_path)
         .arg(&expanded)
         .output()
@@ -1918,10 +1990,8 @@ fn get_file_content_at_commit(path: String, commit_hash: String, file_path: Stri
 #[tauri::command]
 fn get_file_content(path: String, file_path: String) -> Result<String, String> {
     let expanded = shellexpand::tilde(&path).to_string();
-    let full_path = Path::new(&expanded).join(&file_path);
-    if !full_path.exists() {
-        return Err("文件不存在".to_string());
-    }
+    let relative = safe_relative_path(&file_path)?;
+    let full_path = resolve_existing_under(Path::new(&expanded), &relative)?;
     let content = std::fs::read(full_path).map_err(|e| format!("无法读取文件: {}", e))?;
     Ok(String::from_utf8_lossy(&content).to_string())
 }
@@ -2355,5 +2425,109 @@ mod query_tests {
         let entries = generate_changelog(dir.path().to_str().unwrap().to_string(), 5).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].version, "未知时间");
+    }
+}
+
+#[cfg(test)]
+mod path_safety_tests {
+    use super::*;
+
+    #[test]
+    fn safe_relative_path_accepts_normal_paths() {
+        assert_eq!(
+            safe_relative_path("pre-commit").unwrap(),
+            PathBuf::from("pre-commit")
+        );
+        assert_eq!(
+            safe_relative_path("src/main.rs").unwrap(),
+            PathBuf::from("src/main.rs")
+        );
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_traversal() {
+        assert!(safe_relative_path("../evil").is_err());
+        assert!(safe_relative_path("a/../../evil").is_err());
+        // 严格策略：任何 `..` 组件都拒绝（前端只会传普通相对路径）
+        assert!(safe_relative_path("sub/../ok").is_err());
+        assert!(safe_relative_path("/etc/passwd").is_err());
+        assert!(safe_relative_path(".").is_err());
+        assert!(safe_relative_path("..").is_err());
+        assert!(safe_relative_path("").is_err());
+    }
+
+    #[test]
+    fn resolve_existing_under_rejects_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("inside.txt"), "x").unwrap();
+        // macOS 的 tempdir 带 /var -> /private/var 符号链接，需与 canonicalize 后的 base 比较
+        let base = dir.path().canonicalize().unwrap();
+        let resolved = resolve_existing_under(dir.path(), Path::new("inside.txt")).unwrap();
+        assert!(resolved.starts_with(&base));
+        assert!(resolve_existing_under(dir.path(), Path::new("../outside.txt")).is_err());
+        assert!(resolve_existing_under(dir.path(), Path::new("missing.txt")).is_err());
+    }
+
+    #[test]
+    fn hook_commands_reject_traversal_but_keep_normal_flow() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
+        std::fs::write(dir.path().join(".git/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
+        let repo_str = dir.path().to_str().unwrap().to_string();
+
+        // 穿越：读、写都应被拒绝，且目标文件不应出现
+        assert!(get_hook_content(repo_str.clone(), "../config".to_string()).is_err());
+        assert!(
+            save_hook_content(repo_str.clone(), "../../evil.sh".to_string(), "x".to_string()).is_err()
+        );
+        assert!(!dir.path().parent().unwrap().join("evil.sh").exists());
+
+        // 正常流：读已有 hook、新建 hook 且自动 +x
+        assert_eq!(
+            get_hook_content(repo_str.clone(), "pre-commit".to_string()).unwrap(),
+            "#!/bin/sh\n"
+        );
+        save_hook_content(repo_str.clone(), "commit-msg".to_string(), "#!/bin/sh\n".to_string())
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.path().join(".git/hooks/commit-msg"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111, "新建 hook 应带执行权限");
+        }
+    }
+
+    #[test]
+    fn get_file_content_rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
+        let outside = dir.path().parent().unwrap().join("gitsync-should-not-read.txt");
+        std::fs::write(&outside, "secret").unwrap();
+
+        let repo_str = dir.path().to_str().unwrap().to_string();
+        assert_eq!(
+            get_file_content(repo_str.clone(), "a.txt".to_string()).unwrap(),
+            "hello"
+        );
+        assert!(get_file_content(
+            repo_str.clone(),
+            format!("../{}", outside.file_name().unwrap().to_string_lossy())
+        )
+        .is_err());
+        assert!(get_file_content(repo_str.clone(), "/etc/passwd".to_string()).is_err());
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    #[test]
+    fn run_script_rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_str = dir.path().to_str().unwrap().to_string();
+        // 目录外/不存在的脚本一律拒绝，绝不执行
+        assert!(run_script(repo_str.clone(), "../../usr/bin/env".to_string()).is_err());
+        assert!(run_script(repo_str, "/bin/sh".to_string()).is_err());
     }
 }
