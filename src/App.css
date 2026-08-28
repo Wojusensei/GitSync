@@ -1,5 +1,5 @@
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0a14;color:#c8d6e5;min-height:100vh;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,0.5)}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0a14;color:#c8d6e5;min-height:100vh;overflow:hidden;text-shadow:0 1px 2px rgba(0,0,0,0.5)}
 
 /* 应用布局 */
 .app{position:relative;z-index:1;display:grid;grid-template-columns:280px 1fr;grid-template-rows:56px 1fr;height:100vh;gap:0}

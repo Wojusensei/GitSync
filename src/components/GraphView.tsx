@@ -56,7 +56,7 @@ export default function GraphView({ repoPath, onSelectCommit: _onSelectCommit }:
         ctx.fill();
         
         ctx.fillStyle = '#c8d6e5';
-        ctx.font = '12px Inter, sans-serif';
+        ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.fillText(`${c.hash.substring(0, 8)} - ${c.message.substring(0, 40)}`, x + 14, y + 4);
       });
     };

@@ -2,6 +2,16 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
 
+// 报告内容来自仓库的提交信息/作者名/文件路径（可能是克隆来的恶意仓库），
+// 直接拼进 HTML 会在浏览器打开报告时执行任意脚本
+const escapeHtml = (s: string) =>
+  s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 export default function ExportHTML({ repoPath }: { repoPath: string }) {
   const [html, setHtml] = useState('');
   const [loading, setLoading] = useState(false);
@@ -12,7 +22,7 @@ export default function ExportHTML({ repoPath }: { repoPath: string }) {
     setError('');
     try {
       const md = await invoke<string>('export_report_markdown', { path: repoPath });
-      const fullHtml = `<html><head><meta charset="utf-8"><title>仓库分析报告</title></head><body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px;"><pre style="white-space: pre-wrap; line-height: 1.6;">${md}</pre></body></html>`;
+      const fullHtml = `<html><head><meta charset="utf-8"><title>仓库分析报告</title></head><body style="font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px;"><pre style="white-space: pre-wrap; line-height: 1.6;">${escapeHtml(md)}</pre></body></html>`;
       setHtml(fullHtml);
       await navigator.clipboard.writeText(fullHtml);
       alert('HTML 报告已复制到剪贴板');
