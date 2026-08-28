@@ -205,10 +205,9 @@ fn checkout_branch(path: String, branch_name: String) -> Result<(), String> {
             .map_err(|e| format!("无法解析分支: {}", e))?
     };
 
-    // 先更新工作区，成功后再移动 HEAD，避免失败时分支与工作区不一致
-    repo.checkout_tree(&commit.as_object(), Some(&mut git2::build::CheckoutBuilder::default()))
-        .map_err(|e| format!("切换分支失败: {}", e))?;
-
+    // 顺序：先建本地分支/设上游（不触碰工作区），再更新工作区，最后移动 HEAD。
+    // 最可能失败的 checkout_tree 放在工作区未被改动之前；此前的顺序里
+    // 分支创建/设上游失败会留下「工作区已更新但 HEAD 未动」的半切换状态
     if track {
         let mut local = repo
             .branch(&target, &commit, false)
@@ -217,6 +216,9 @@ fn checkout_branch(path: String, branch_name: String) -> Result<(), String> {
             .set_upstream(Some(&branch_name))
             .map_err(|e| format!("设置上游失败: {}", e))?;
     }
+
+    repo.checkout_tree(&commit.as_object(), Some(&mut git2::build::CheckoutBuilder::default()))
+        .map_err(|e| format!("切换分支失败: {}", e))?;
 
     repo.set_head(&format!("refs/heads/{}", target))
         .map_err(|e| format!("设置 HEAD 失败: {}", e))?;
@@ -410,14 +412,16 @@ struct FileTimelineEntry {
 }
 
 #[tauri::command]
-fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTimelineEntry>, String> {
+async fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTimelineEntry>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
+    get_file_timeline_impl(&repo, &file_path)
+}
 
-    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
-    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
+// 全历史逐提交做 diff，属重活；async 命令运行在线程池，避免卡住 UI 主线程
+fn get_file_timeline_impl(repo: &Repository, file_path: &str) -> Result<Vec<FileTimelineEntry>, String> {
+    let mut revwalk = sorted_revwalk(repo)?;
 
     let mut entries = Vec::new();
 
@@ -499,7 +503,10 @@ fn get_health_report(path: String) -> Result<HealthReport, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
+    get_health_report_impl(&repo)
+}
 
+fn get_health_report_impl(repo: &Repository) -> Result<HealthReport, String> {
     let mut large_files = Vec::new();
     let mut conflicts = Vec::new();
 
@@ -565,14 +572,16 @@ struct Contributor {
 }
 
 #[tauri::command]
-fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
+async fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
+    get_contributors_impl(&repo)
+}
 
-    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
-    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
+// 逐提交做 diff 统计，属重活；async 命令运行在线程池，避免卡住 UI 主线程
+fn get_contributors_impl(repo: &Repository) -> Result<Vec<Contributor>, String> {
+    let mut revwalk = sorted_revwalk(repo)?;
 
     let mut contributors: std::collections::HashMap<String, (String, usize, usize, usize)> = std::collections::HashMap::new();
     let mut processed = 0usize;
@@ -638,14 +647,16 @@ struct HotFile {
 }
 
 #[tauri::command]
-fn get_hot_files(path: String) -> Result<Vec<HotFile>, String> {
+async fn get_hot_files(path: String) -> Result<Vec<HotFile>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
+    get_hot_files_impl(&repo)
+}
 
-    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
-    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
+// 逐提交做 diff 统计，属重活；async 命令运行在线程池，避免卡住 UI 主线程
+fn get_hot_files_impl(repo: &Repository) -> Result<Vec<HotFile>, String> {
+    let mut revwalk = sorted_revwalk(repo)?;
 
     let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut processed = 0;
@@ -790,7 +801,7 @@ fn get_rebase_commits(path: String, count: usize) -> Result<Vec<RebaseCommit>, S
 }
 
 #[tauri::command]
-fn execute_rebase(path: String, operations: Vec<RebaseOperation>) -> Result<String, String> {
+async fn execute_rebase(path: String, operations: Vec<RebaseOperation>) -> Result<String, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
@@ -988,14 +999,16 @@ struct SearchResult {
 }
 
 #[tauri::command]
-fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, String> {
+async fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
+    semantic_search_impl(&repo, &query)
+}
 
-    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
-    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
+// 全历史逐提交逐行扫描，属重活；async 命令运行在线程池，避免卡住 UI 主线程
+fn semantic_search_impl(repo: &Repository, query: &str) -> Result<Vec<SearchResult>, String> {
+    let mut revwalk = sorted_revwalk(repo)?;
 
     let mut results = Vec::new();
     let query_lower = query.to_lowercase();
@@ -1779,10 +1792,12 @@ fn resolve_conflict(path: String, file_path: String, resolutions: Vec<String>) -
 }
 
 #[tauri::command]
-fn export_report_markdown(path: String) -> Result<String, String> {
-    let health = get_health_report(path.clone())?;
-    let contributors = get_contributors(path.clone())?;
-    let hot_files = get_hot_files(path.clone())?;
+async fn export_report_markdown(path: String) -> Result<String, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    let health = get_health_report_impl(&repo)?;
+    let contributors = get_contributors_impl(&repo)?;
+    let hot_files = get_hot_files_impl(&repo)?;
 
     let mut md = String::from("# 仓库分析报告\n\n## 健康报告\n");
     md.push_str(&format!("- 大文件: {}\n", health.large_files.join(", ")));
@@ -2223,9 +2238,15 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
 
 #[tauri::command]
 async fn pick_background_image(app: tauri::AppHandle) -> Result<String, String> {
-    let file_path = app.dialog().file()
-        .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
-        .blocking_pick_file();
+    // blocking_pick_file 会阻塞线程，放到线程池避免卡住 async runtime / UI
+    let file_path = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| format!("文件对话框失败: {}", e))?;
     match file_path {
         Some(path) => {
             let p = path.as_path().ok_or("路径无效")?;
@@ -2239,7 +2260,11 @@ async fn pick_background_image(app: tauri::AppHandle) -> Result<String, String> 
 
 #[tauri::command]
 async fn open_folder_dialog(app: tauri::AppHandle) -> Result<String, String> {
-    let folder_path = app.dialog().file().blocking_pick_folder();
+    let folder_path = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog().file().blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| format!("文件夹对话框失败: {}", e))?;
     match folder_path {
         Some(path) => {
             let p = path.as_path().ok_or("路径无效")?;
@@ -2824,12 +2849,30 @@ mod backend_fix_tests {
         let repo = git2::Repository::init(dir.path()).unwrap();
         commit(&repo, "base", 1_700_000_000, &[("a.txt", "alpha\nbeta\n")]);
         commit(&repo, "add needle at line 3", 1_700_000_100, &[("a.txt", "alpha\nbeta\nneedle\n")]);
-        let path = dir.path().to_str().unwrap().to_string();
 
-        let res = semantic_search(path, "needle".into()).unwrap();
+        let res = semantic_search_impl(&repo, "needle").unwrap();
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].line_number, 3, "应报告真实行号而非匹配序号");
         assert_eq!(res[0].file_path, "a.txt");
+    }
+
+    #[test]
+    fn checkout_remote_branch_creates_tracked_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        repo.remote("origin", "https://example.com/x.git").unwrap();
+        commit(&repo, "base", 1_700_000_000, &[("a.txt", "master\n")]);
+        let feat_tip = commit(&repo, "feat", 1_700_000_100, &[("a.txt", "feature\n")]);
+        // 建远程跟踪引用（无本地 feat 分支）
+        repo.reference("refs/remotes/origin/feat", Oid::from_str(&feat_tip).unwrap(), true, "test").unwrap();
+
+        checkout_branch(dir.path().to_str().unwrap().to_string(), "origin/feat".into()).unwrap();
+
+        assert_eq!(repo.head().unwrap().shorthand().unwrap(), "feat", "HEAD 应指向新建本地分支");
+        let local = repo.find_branch("feat", git2::BranchType::Local).unwrap();
+        assert_eq!(local.get().peel_to_commit().unwrap().id(), Oid::from_str(&feat_tip).unwrap());
+        assert_eq!(local.upstream().unwrap().name().unwrap().unwrap(), "origin/feat");
+        assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "feature\n", "工作区应更新到 feat");
     }
 
     #[test]
