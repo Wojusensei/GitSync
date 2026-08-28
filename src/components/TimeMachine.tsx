@@ -16,6 +16,15 @@ interface TimeMachineSnapshot {
   files: TimeMachineFile[];
 }
 
+// 后端返回 "YYYY-MM-DD HH:MM:SS"（UTC）。`new Date("... ...")` 这种
+// 空格分隔格式在 WKWebView（macOS）返回 Invalid Date，且 Chromium 按
+// 本地时区解析，都与后端的 UTC 时间戳不一致 —— 这里按 UTC 手动解析
+function parseGitTime(s: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(s.trim());
+  if (!m) return NaN;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000;
+}
+
 export default function TimeMachine({ repoPath }: { repoPath: string }) {
   const [snapshot, setSnapshot] = useState<TimeMachineSnapshot | null>(null);
   const [fileContent, setFileContent] = useState('');
@@ -26,16 +35,21 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   const [minTime, setMinTime] = useState(0);
   const [maxTime, setMaxTime] = useState(Math.floor(Date.now() / 1000));
   const intervalRef = useRef<number | null>(null);
+  // 快照请求序号：播放时 200ms 一发不等返回，晚到的旧响应会覆盖新快照
+  const snapshotSeqRef = useRef(0);
 
   useEffect(() => {
     const loadTimeRange = async () => {
       try {
         const commits: any[] = await invokeTauri('get_commits', { path: repoPath });
         if (commits.length > 0) {
-          const times = commits.map((c: any) => new Date(c.time).getTime() / 1000);
-          setMinTime(Math.min(...times));
-          setMaxTime(Math.max(...times));
-          setCurrentTime(Math.max(...times));
+          const times = commits.map((c: any) => parseGitTime(c.time)).filter(t => !isNaN(t));
+          if (times.length > 0) {
+            setMinTime(Math.min(...times));
+            setMaxTime(Math.max(...times));
+            setCurrentTime(Math.max(...times));
+            loadSnapshot(Math.max(...times));
+          }
         }
       } catch (e) { console.error(e); }
     };
@@ -43,15 +57,14 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   }, [repoPath]);
 
   const loadSnapshot = async (ts: number) => {
+    const seq = ++snapshotSeqRef.current;
     try {
       const res: TimeMachineSnapshot = await invokeTauri('get_time_machine_snapshot', { path: repoPath, timestamp: ts });
-      setSnapshot(res);
+      if (seq === snapshotSeqRef.current) {
+        setSnapshot(res);
+      }
     } catch (e) { console.error(e); }
   };
-
-  useEffect(() => {
-    if (repoPath) loadSnapshot(currentTime);
-  }, [repoPath]);
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const ts = parseInt(e.target.value);

@@ -13,10 +13,16 @@ interface TreeNode {
 export default function FileTree({ repoPath, onSelectFile }: { repoPath: string; onSelectFile: (path: string) => void }) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [error, setError] = useState('');
 
   const loadTree = async () => {
-    const res = await invoke<TreeNode[]>('get_file_tree', { path: repoPath });
-    setNodes(res);
+    setError('');
+    try {
+      const res = await invoke<TreeNode[]>('get_file_tree', { path: repoPath });
+      setNodes(res);
+    } catch (e: any) {
+      setError(String(e));
+    }
   };
 
   const toggleExpand = (path: string) => {
@@ -63,6 +69,7 @@ export default function FileTree({ repoPath, onSelectFile }: { repoPath: string;
     <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
       <h3>文件树</h3>
       <button className="btn btn-blue" onClick={loadTree}>加载文件树</button>
+      {error && <div className="analysis-item" style={{ color: '#ff6b6b' }}>{error}</div>}
       <div style={{ maxHeight: 400, overflowY: 'auto', marginTop: 12 }}>
         {nodes.sort((a, b) => {
           if (a.is_directory !== b.is_directory) {

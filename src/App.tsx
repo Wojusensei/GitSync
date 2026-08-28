@@ -155,22 +155,24 @@ function App() {
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'single' | 'list'>('single');
 
-  // 分页加载函数
-  const loadCommitsPage = useCallback(async (pageNum: number, reset: boolean) => {
-    if (!repoPath.trim()) return;
+  // 分页加载函数（pathOverride：打开文件夹/多仓库切换时显式传新路径，
+  // 避免 useCallback 闭包读到旧的 repoPath）
+  const loadCommitsPage = useCallback(async (pageNum: number, reset: boolean, pathOverride?: string) => {
+    const targetPath = pathOverride ?? repoPath;
+    if (!targetPath.trim()) return;
     if (!reset && !hasMore) return;
     setLoading(true);
     setError('');
     try {
       const [branchResult] = await Promise.all([
-        invoke<Branch[]>('get_branches', { path: repoPath }),
+        invoke<Branch[]>('get_branches', { path: targetPath }),
       ]);
       setBranches(branchResult);
       const headBranch = branchResult.find(b => b.is_head);
       if (headBranch) setActiveBranch(headBranch.name);
 
       const result = await invoke<[Commit[], number]>('get_commits_paginated', {
-        path: repoPath,
+        path: targetPath,
         page: pageNum,
         pageSize: PAGE_SIZE
       });
@@ -182,19 +184,21 @@ function App() {
       }
       setHasMore((pageNum + 1) * PAGE_SIZE < total);
     } catch (e: any) {
-      setError(e);
+      // Tauri IPC 层错误可能是 Error 对象，塞进 state 会让 React 渲染崩溃
+      setError(String(e));
       if (reset) { setCommits([]); }
     } finally { setLoading(false); }
   }, [repoPath, hasMore]);
 
-  const loadRepo = useCallback(async () => {
-    if (!repoPath.trim()) return;
+  const loadRepo = useCallback(async (pathOverride?: string) => {
+    const targetPath = pathOverride ?? repoPath;
+    if (!targetPath.trim()) return;
     setHasMore(true);
     setCommits([]);
     setSelectedCommit(null);
     setCommitDetail(null);
     setSelectedTreeFile(null);
-    await loadCommitsPage(0, true);
+    await loadCommitsPage(0, true, targetPath);
   }, [repoPath, loadCommitsPage]);
 
   const [activeBlame, setActiveBlame] = useState<string | null>(null);
@@ -309,18 +313,14 @@ function App() {
       const path = await invoke<string>('open_folder_dialog');
       if (path) {
         setRepoPath(path);
-        setTimeout(() => loadRepo(), 100);
+        // 显式传入新路径：闭包里的 loadRepo 读到的是旧 repoPath，
+        // 首次打开时为空串会直接 return，导致选择文件夹后什么都不加载
+        await loadRepo(path);
       }
     } catch (e: any) {
-      setError(e);
+      setError(String(e));
     }
   };
-
-  useEffect(() => {
-    if (repoPath) {
-      loadRepo();
-    }
-  }, []);
 
   useEffect(() => {
     setOrder(commits.map((_, i) => i));
@@ -396,14 +396,14 @@ function App() {
     if (activeBlame === filePath) { setActiveBlame(null); setBlameData([]); return; }
     setActiveBlame(filePath);
     setActiveTimeline(null);
-    try { const result = await invoke<BlameLine[]>('get_blame', { path: repoPath, filePath }); setBlameData(result); } catch (e: any) { setError(e); }
+    try { const result = await invoke<BlameLine[]>('get_blame', { path: repoPath, filePath }); setBlameData(result); } catch (e: any) { setError(String(e)); }
   };
 
   const handleTimeline = async (filePath: string) => {
     if (activeTimeline === filePath) { setActiveTimeline(null); setTimelineData([]); return; }
     setActiveTimeline(filePath);
     setActiveBlame(null);
-    try { const result = await invoke<FileTimelineEntry[]>('get_file_timeline', { path: repoPath, filePath }); setTimelineData(result); } catch (e: any) { setError(e); }
+    try { const result = await invoke<FileTimelineEntry[]>('get_file_timeline', { path: repoPath, filePath }); setTimelineData(result); } catch (e: any) { setError(String(e)); }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -456,7 +456,11 @@ function App() {
         localStorage.setItem('bgStyle', 'custom');
       }
     } catch (e: any) {
-      setError(e);
+      // 用户在文件选择器里点取消不算错误，静默返回
+      const msg = String(e);
+      if (!msg.includes('取消')) {
+        setError(msg);
+      }
     }
   };
 
@@ -826,8 +830,8 @@ function App() {
               {stashList.map(s => (
                 <div key={s.index} className="analysis-item">
                   <span className="hash">stash@{`{${s.index}}`}</span><span className="message">{s.message}</span>
-                  <button className="detail-action-btn" onClick={async () => { await invoke('stash_pop', { path: repoPath, index: s.index }); loadStashList(); }}>pop</button>
-                  <button className="detail-action-btn" onClick={async () => { await invoke('stash_drop', { path: repoPath, index: s.index }); loadStashList(); }}>drop</button>
+                  <button className="detail-action-btn" onClick={async () => { try { await invoke('stash_pop', { path: repoPath, index: s.index }); setToast('已弹出 stash'); } catch (e: any) { setError(String(e)); setToast('stash pop 失败'); } loadStashList(); }}>pop</button>
+                  <button className="detail-action-btn" onClick={async () => { if (!confirm(`确定删除 stash@{${s.index}}？该操作不可恢复。`)) return; try { await invoke('stash_drop', { path: repoPath, index: s.index }); setToast('已删除 stash'); } catch (e: any) { setError(String(e)); setToast('stash drop 失败'); } loadStashList(); }}>drop</button>
                 </div>
               ))}
               <button className="btn btn-blue" style={{ marginTop: 10 }} onClick={async () => { await invoke('stash_save', { path: repoPath, message: null }); loadStashList(); }}>保存当前改动</button>
@@ -856,7 +860,7 @@ function App() {
           {showCommitFilter && <div id="panel-filter"><CommitFilter repoPath={repoPath} onFiltered={(commits) => setCommits(commits)} /></div>}
           {showTagManager && <div id="panel-tags"><TagManager repoPath={repoPath} /></div>}
           {showRemoteManager && <div id="panel-remotes"><RemoteManager repoPath={repoPath} /></div>}
-          {showMultiRepo && <div id="panel-multirepo"><MultiRepo onSelectRepo={(path) => setRepoPath(path)} /></div>}
+          {showMultiRepo && <div id="panel-multirepo"><MultiRepo onSelectRepo={(path) => { setRepoPath(path); loadRepo(path); }} /></div>}
           {showSemanticSearch && <div id="panel-semantic"><SemanticSearch repoPath={repoPath} /></div>}
           {showDiffViewer && <div id="panel-diffviewer"><DiffViewer repoPath={repoPath} /></div>}
           {showChangelog && <div id="panel-changelog"><ChangelogGenerator repoPath={repoPath} /></div>}

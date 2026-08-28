@@ -7,12 +7,18 @@ export default function CommitFilter({ repoPath, onFiltered }: { repoPath: strin
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filePath, setFilePath] = useState('');
+  const [error, setError] = useState('');
 
   const applyFilter = async () => {
-    const res = await invoke<any[]>('filter_commits', {
-      path: repoPath, author: author || null, dateFrom: dateFrom || null, dateTo: dateTo || null, filePath: filePath || null
-    });
-    onFiltered(res);
+    setError('');
+    try {
+      const res = await invoke<any[]>('filter_commits', {
+        path: repoPath, author: author || null, dateFrom: dateFrom || null, dateTo: dateTo || null, filePath: filePath || null
+      });
+      onFiltered(res);
+    } catch (e: any) {
+      setError(String(e));
+    }
   };
 
   return (
@@ -24,6 +30,7 @@ export default function CommitFilter({ repoPath, onFiltered }: { repoPath: strin
         <input className="path-input" value={dateTo} onChange={e => setDateTo(e.target.value)} placeholder="截止日期 (YYYY-MM-DD)" />
         <input className="path-input" value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="文件路径" />
         <button className="btn btn-blue" onClick={applyFilter}>筛选</button>
+        {error && <div style={{ color: '#ff6b6b', fontSize: 12 }}>{error}</div>}
       </div>
     </motion.div>
   );
