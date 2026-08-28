@@ -35,11 +35,15 @@ export default function QueryConsole({ repoPath }: { repoPath: string }) {
     }
   };
 
+  // 以 = + - @ 或制表符开头的单元格在 Excel/WPS 里会被当公式执行（CSV 公式注入），
+  // commit message 来自任意仓库，导出前加前缀使其按文本处理
+  const safeCsvCell = (cell: string) => (/^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell);
+
   const exportCSV = () => {
     if (!result) return;
-    let csv = result.columns.join(',') + '\n';
+    let csv = result.columns.map(c => `"${safeCsvCell(c.replace(/"/g, '""'))}"`).join(',') + '\n';
     result.rows.forEach(row => {
-      csv += row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(',') + '\n';
+      csv += row.map(cell => `"${safeCsvCell(cell.replace(/"/g, '""'))}"`).join(',') + '\n';
     });
     navigator.clipboard.writeText(csv).then(() => alert('CSV 已复制到剪贴板'));
   };
