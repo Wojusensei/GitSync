@@ -73,38 +73,52 @@ struct FileChange {
     diff: String,
 }
 
-#[tauri::command]
-fn get_commits(path: String) -> Result<Vec<Commit>, String> {
-    let expanded = shellexpand::tilde(&path).to_string();
-    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
-    let mut commits = Vec::new();
+// 提交遍历上限：主列表保持轻量，分析类功能放宽，SQL 查询按 diff 级别取折中
+const MAIN_COMMIT_LIMIT: usize = 100;
+const ANALYSIS_COMMIT_LIMIT: usize = 2000;
+const QUERY_COMMIT_LIMIT: usize = 500;
 
+fn commit_to_json(oid: Oid, commit: &git2::Commit<'_>) -> Commit {
+    let time = commit.time();
+    let timestamp = chrono::DateTime::from_timestamp(time.seconds(), 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "未知时间".into());
+    Commit {
+        hash: oid.to_string(),
+        author: commit.author().name().unwrap_or("未知").to_string(),
+        time: timestamp,
+        message: commit.message().unwrap_or("").to_string(),
+    }
+}
+
+// TIME|TOPOLOGICAL：提交时钟偏斜时仅按时间排序会出现父提交排在子提交之后
+fn sorted_revwalk(repo: &Repository) -> Result<git2::Revwalk<'_>, String> {
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk
+        .set_sorting(Sort::TIME | Sort::TOPOLOGICAL)
+        .map_err(|e| format!("无法设置排序: {}", e))?;
+    Ok(revwalk)
+}
 
-    for oid in revwalk {
+fn collect_commits(repo: &Repository, limit: usize) -> Result<Vec<Commit>, String> {
+    let mut commits = Vec::new();
+    for oid in sorted_revwalk(repo)? {
         let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
         let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
-
-        let time = commit.time();
-        let timestamp = chrono::DateTime::from_timestamp(time.seconds(), 0)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_else(|| "未知时间".into());
-
-        commits.push(Commit {
-            hash: oid.to_string(),
-            author: commit.author().name().unwrap_or("未知").to_string(),
-            time: timestamp,
-            message: commit.message().unwrap_or("").to_string(),
-        });
-
-        if commits.len() >= 100 {
+        commits.push(commit_to_json(oid, &commit));
+        if commits.len() >= limit {
             break;
         }
     }
-
     Ok(commits)
+}
+
+#[tauri::command]
+fn get_commits(path: String, limit: Option<usize>) -> Result<Vec<Commit>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
+    collect_commits(&repo, limit.unwrap_or(MAIN_COMMIT_LIMIT).min(ANALYSIS_COMMIT_LIMIT))
 }
 
 #[tauri::command]
@@ -301,7 +315,10 @@ fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDetail, 
 
 #[tauri::command]
 fn search_commits(path: String, query: String) -> Result<Vec<Commit>, String> {
-    let all = get_commits(path)?;
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let all = collect_commits(&repo, ANALYSIS_COMMIT_LIMIT)?;
     let query_lower = query.to_lowercase();
     let filtered: Vec<Commit> = all
         .into_iter()
@@ -400,7 +417,7 @@ fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTimeline
 
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut entries = Vec::new();
 
@@ -488,30 +505,43 @@ fn get_health_report(path: String) -> Result<HealthReport, String> {
 
     if let Ok(statuses) = repo.statuses(None) {
         for entry in statuses.iter() {
-            let path = entry.path().unwrap_or("未知");
             if entry.status() == git2::Status::CONFLICTED {
-                conflicts.push(path.to_string());
-            }
-            if let Ok(tree) = repo.head().and_then(|h| h.peel_to_tree()) {
-                if let Ok(entry) = tree.get_path(Path::new(path)) {
-                    let blob = repo.find_blob(entry.id()).ok();
-                    if let Some(blob) = blob {
-                        if blob.size() > 1024 * 1024 {
-                            large_files.push(path.to_string());
-                        }
-                    }
+                if let Ok(p) = entry.path() {
+                    conflicts.push(p.to_string());
                 }
             }
         }
     }
 
+    // 大文件扫描遍历 HEAD 树全量；此前只查 statuses 里的脏文件，干净仓库永远报不出
+    if let Ok(tree) = repo.head().and_then(|h| h.peel_to_tree()) {
+        let _ = tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+            if entry.kind() == Some(git2::ObjectType::Blob) {
+                if let Ok(blob) = repo.find_blob(entry.id()) {
+                    if blob.size() > 1024 * 1024 {
+                        if let Ok(name) = entry.name() {
+                            large_files.push(format!("{}{}", root, name));
+                        }
+                    }
+                }
+            }
+            git2::TreeWalkResult::Ok
+        });
+    }
+
     let mut stale_branches = Vec::new();
-    if let Ok(branches) = repo.branches(None) {
+    let head_name = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().ok().map(|s| s.to_string()));
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
         for branch in branches {
             if let Ok((branch, _)) = branch {
                 let name = branch.name().map_err(|e| format!("分支名错误: {}", e))?;
                 let name = name.unwrap_or("未知").to_string();
-                if branch.upstream().is_err() {
+                // 只看本地分支：远程跟踪分支天然没有 upstream 配置；
+                // 当前分支没有 upstream 是常态，不算废弃
+                if Some(&name) != head_name.as_ref() && branch.upstream().is_err() {
                     stale_branches.push(name);
                 }
             }
@@ -542,7 +572,7 @@ fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
 
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut contributors: std::collections::HashMap<String, (String, usize, usize, usize)> = std::collections::HashMap::new();
     let mut processed = 0usize;
@@ -615,7 +645,7 @@ fn get_hot_files(path: String) -> Result<Vec<HotFile>, String> {
 
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut processed = 0;
@@ -742,7 +772,10 @@ struct RebaseOperation {
 
 #[tauri::command]
 fn get_rebase_commits(path: String, count: usize) -> Result<Vec<RebaseCommit>, String> {
-    let commits = get_commits(path)?;
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let commits = collect_commits(&repo, ANALYSIS_COMMIT_LIMIT)?;
     let result: Vec<RebaseCommit> = commits
         .into_iter()
         .take(count)
@@ -962,7 +995,7 @@ fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, Str
 
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut results = Vec::new();
     let query_lower = query.to_lowercase();
@@ -1089,7 +1122,10 @@ struct ChangelogEntry {
 
 #[tauri::command]
 fn generate_changelog(path: String, count: usize) -> Result<Vec<ChangelogEntry>, String> {
-    let commits = get_commits(path)?;
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let commits = collect_commits(&repo, ANALYSIS_COMMIT_LIMIT)?;
     let mut entries: Vec<ChangelogEntry> = Vec::new();
 
     let mut current_date = String::new();
@@ -1138,7 +1174,7 @@ fn get_graph_commits(path: String) -> Result<Vec<GraphCommit>, String> {
     let repo = Repository::open(Path::new(&expanded)).map_err(|e| format!("无法打开仓库: {}", e))?;
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut results = Vec::new();
     for oid in revwalk {
@@ -1203,7 +1239,10 @@ fn get_file_tree(path: String) -> Result<Vec<TreeNode>, String> {
 
 #[tauri::command]
 fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, file_path: Option<String>) -> Result<Vec<Commit>, String> {
-    let all = get_commits(path.clone())?;
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let all = collect_commits(&repo, ANALYSIS_COMMIT_LIMIT)?;
     let filtered: Vec<Commit> = all.into_iter().filter(|c| {
         if let Some(ref a) = author { if !c.author.to_lowercase().contains(&a.to_lowercase()) { return false; } }
         if let Some(ref df) = date_from { if c.time < *df { return false; } }
@@ -1218,10 +1257,7 @@ fn filter_commits(path: String, author: Option<String>, date_from: Option<String
     // 文件路径筛选：先收集改动过该文件的提交集合，再交集过滤
     if let Some(ref fp) = file_path {
         if !fp.trim().is_empty() {
-            let expanded = shellexpand::tilde(&path).to_string();
-            let repo = Repository::open(Path::new(&expanded))
-                .map_err(|e| format!("无法打开仓库: {}", e))?;
-            let touching = commits_touching_file(&repo, fp.trim(), 2000)?;
+            let touching = commits_touching_file(&repo, fp.trim(), ANALYSIS_COMMIT_LIMIT)?;
             return Ok(filtered.into_iter().filter(|c| touching.contains(&c.hash)).collect());
         }
     }
@@ -1500,14 +1536,23 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
 
 #[tauri::command]
 fn get_commits_paginated(path: String, page: usize, page_size: usize) -> Result<(Vec<Commit>, usize), String> {
-    let all = get_commits(path)?;
-    let total = all.len();
-    let start = page * page_size;
-    if start >= total {
-        return Ok((vec![], total));
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+
+    // 单遍 revwalk：跳过前 start 个取一页，同时统计真实总数（此前被 100 条上限截断）
+    let start = page.saturating_mul(page_size);
+    let end = start.saturating_add(page_size);
+    let mut total = 0usize;
+    let mut page_data = Vec::new();
+    for oid in sorted_revwalk(&repo)? {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        if total >= start && total < end {
+            let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+            page_data.push(commit_to_json(oid, &commit));
+        }
+        total += 1;
     }
-    let end = (start + page_size).min(total);
-    let page_data = all[start..end].to_vec();
     Ok((page_data, total))
 }
 
@@ -1517,6 +1562,8 @@ fn get_hooks(path: String) -> Result<Vec<String>, String> {
     let mut hooks = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&hooks_dir) {
         for entry in entries.flatten() {
+            // 只列文件，hooks 目录下的子目录不是可执行 hook
+            if !entry.path().is_file() { continue; }
             let name = entry.file_name().to_string_lossy().to_string();
             if !name.ends_with(".sample") { hooks.push(name); }
         }
@@ -1816,7 +1863,7 @@ struct FileChangeRow {
 fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow>), String> {
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut commits = Vec::new();
     let mut files = Vec::new();
@@ -1882,7 +1929,7 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
             }
         }
 
-        if commits.len() >= 200 { break; }
+        if commits.len() >= QUERY_COMMIT_LIMIT { break; }
     }
 
     Ok((commits, files))
@@ -1932,7 +1979,16 @@ fn rewrite_contains(sql: &str) -> String {
                 if chars.get(j) == Some(&'\'') {
                     let mut k = j + 1;
                     let mut val = String::new();
-                    while k < chars.len() && chars[k] != '\'' {
+                    // SQL 字面量的 '' 转义：单引号要还原进值里，否则 a''b 产出坏 SQL
+                    while k < chars.len() {
+                        if chars[k] == '\'' {
+                            if chars.get(k + 1) == Some(&'\'') {
+                                val.push('\'');
+                                k += 2;
+                                continue;
+                            }
+                            break;
+                        }
                         val.push(chars[k]);
                         k += 1;
                     }
@@ -1940,7 +1996,8 @@ fn rewrite_contains(sql: &str) -> String {
                         let escaped = val
                             .replace('\\', "\\\\")
                             .replace('%', "\\%")
-                            .replace('_', "\\_");
+                            .replace('_', "\\_")
+                            .replace('\'', "''");
                         // 不带前导空格：关键词前的空白已原样保留
                         out.push_str("LIKE '%");
                         out.push_str(&escaped);
@@ -2110,7 +2167,7 @@ fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachine
 
     let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
     revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME).map_err(|e| format!("无法设置排序: {}", e))?;
+    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
 
     let mut closest_commit: Option<(Oid, i64)> = None;
     for oid in revwalk {
@@ -2791,5 +2848,105 @@ mod backend_fix_tests {
             snap.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>()
         );
         assert!(snap.files.iter().any(|f| f.path == "docs"));
+    }
+
+    fn big_repo(dir: &Path, count: usize) -> Vec<String> {
+        let repo = git2::Repository::init(dir).unwrap();
+        let mut hashes = Vec::new();
+        for i in 0..count {
+            let content = format!("v{}\n", i);
+            hashes.push(commit(&repo, &format!("msg {}", i), 1_700_000_000 + i as i64, &[("a.txt", &content)]));
+        }
+        hashes
+    }
+
+    #[test]
+    fn health_report_scans_head_tree_and_local_stale_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let big: String = std::iter::repeat('x').take(1_500_000).collect();
+        commit(&repo, "big", 1_700_000_000, &[("big.bin", &big), ("a.txt", "x\n")]);
+        // 建一个本地分支（无上游）和一个远程跟踪引用
+        let head_oid = repo.head().unwrap().peel_to_commit().unwrap().id();
+        repo.branch("feature", &repo.find_commit(head_oid).unwrap(), false).unwrap();
+        repo.reference("refs/remotes/origin/feat", head_oid, true, "test").unwrap();
+
+        let report = get_health_report(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert!(report.large_files.iter().any(|f| f == "big.bin"), "应遍历 HEAD 树发现大文件，实际: {:?}", report.large_files);
+        let cur = repo.head().unwrap().shorthand().unwrap().to_string();
+        assert!(!report.stale_branches.iter().any(|b| *b == cur), "当前分支不应算废弃分支");
+        assert!(report.stale_branches.iter().any(|b| b == "feature"));
+        assert!(!report.stale_branches.iter().any(|b| b.starts_with("origin/")), "远程跟踪分支不应出现在无上游列表");
+    }
+
+    #[test]
+    fn commits_order_by_topology_under_clock_skew() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        // 父提交时间晚于子提交（时钟偏斜）：拓扑序必须保证子在前
+        let parent = commit(&repo, "parent later", 1_700_001_000, &[("a.txt", "1\n")]);
+        let child = commit(&repo, "child earlier", 1_700_000_000, &[("a.txt", "2\n")]);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let commits = get_commits(path, None).unwrap();
+        assert_eq!(commits[0].hash, child, "子提交应排在前面");
+        assert_eq!(commits[1].hash, parent);
+        let _ = parent;
+    }
+
+    #[test]
+    fn pagination_reports_real_total_beyond_100() {
+        let dir = tempfile::tempdir().unwrap();
+        let hashes = big_repo(dir.path(), 150);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let (page0, total) = get_commits_paginated(path.clone(), 0, 30).unwrap();
+        assert_eq!(total, 150, "总数不应被 100 条上限截断");
+        assert_eq!(page0.len(), 30);
+        assert_eq!(page0[0].hash, hashes[149], "第一页应是最新提交");
+        let (page4, _) = get_commits_paginated(path.clone(), 4, 30).unwrap();
+        assert_eq!(page4.len(), 30);
+        let (page5, _) = get_commits_paginated(path.clone(), 5, 30).unwrap();
+        assert_eq!(page5.len(), 0);
+    }
+
+    #[test]
+    fn limit_param_and_search_beyond_100() {
+        let dir = tempfile::tempdir().unwrap();
+        let hashes = big_repo(dir.path(), 150);
+        let path = dir.path().to_str().unwrap().to_string();
+
+        assert_eq!(get_commits(path.clone(), Some(5)).unwrap().len(), 5);
+        assert_eq!(get_commits(path.clone(), None).unwrap().len(), MAIN_COMMIT_LIMIT);
+
+        let res = search_commits(path, "msg 145".into()).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].hash, hashes[145], "第 145 条提交应能被搜到（旧实现只见前 100 条）");
+    }
+
+    #[test]
+    fn contains_handles_escaped_quote() {
+        assert_eq!(
+            rewrite_contains("WHERE m CONTAINS 'a''b'"),
+            "WHERE m LIKE '%a''b%' ESCAPE '\\'"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        commit(&repo, "fix: a'b bug", 1_700_000_000, &[("a.txt", "x\n")]);
+        let res = git_query(
+            dir.path().to_str().unwrap().to_string(),
+            "SELECT COUNT(*) FROM commits WHERE message CONTAINS 'a''b'".into(),
+        ).unwrap();
+        assert_eq!(res.rows, vec![vec!["1".to_string()]]);
+    }
+
+    #[test]
+    fn get_hooks_skips_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join(".git/hooks/sub.d")).unwrap();
+        std::fs::write(dir.path().join(".git/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
+        let hooks = get_hooks(dir.path().to_str().unwrap().to_string()).unwrap();
+        assert_eq!(hooks, vec!["pre-commit".to_string()]);
     }
 }
