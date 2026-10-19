@@ -213,4 +213,4 @@ GitSync provides an official Arch Linux package. If you would like to improve th
 
 ## 📄 License
 
-[MIT License](https://opensource.org/licenses/MIT)
+[GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)

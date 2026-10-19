@@ -217,8 +217,7 @@ GitSync 已提供官方 Arch Linux 安装包。如果你希望继续完善 AUR �
 
 ## 📄 开源协议
 
-[MIT License](https://opensource.org/licenses/MIT)
+[GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)
 
 ## ⭐️ STAR
 [![Star History Chart](https://api.star-history.com/svg?repos=Wojusensei/GitSync&type=date&legend=top-left)](https://www.star-history.com/#Wojusensei/Gitsync&type=date&legend=top-left)
-
