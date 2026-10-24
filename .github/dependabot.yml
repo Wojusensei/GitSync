@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # Rust 依赖：manifest 在 src-tauri 下
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+  # 前端 + 构建链（vite/postcss 等都在 devDependencies）
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
