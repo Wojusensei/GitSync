@@ -6,7 +6,7 @@ version = 4
 name = "GitSync"
 version = "0.3.4"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "git2",
  "rusqlite",
