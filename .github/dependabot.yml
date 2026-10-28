@@ -7,6 +7,12 @@ updates:
       interval: weekly
     # 同时最多开 3 个 PR，避免首次扫描式刷屏；安全更新不受此限制
     open-pull-requests-limit: 3
+    # 新版本发布后先放几天再提，降低刚发布版本出问题的概率；安全更新不受 cooldown 影响
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+      semver-minor-days: 5
+      semver-patch-days: 3
     groups:
       # tauri 及插件要跟 npm 侧同 minor，单独一组方便配对升级
       tauri:
@@ -30,6 +36,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+      semver-minor-days: 5
+      semver-patch-days: 3
     groups:
       # @tauri-apps/api 与 Rust crate 必须同 minor，单独一组
       tauri:
