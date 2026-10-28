@@ -30,6 +30,11 @@ jobs:
     - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2
     - run: npm ci
+    # cargo test 编译时需要 dist 存在（tauri::generate_context! 会读取 frontendDist）
+    - name: Build frontend for tests
+      run: npm run build
+    - name: Run Rust tests
+      run: cargo test --locked --manifest-path src-tauri/Cargo.toml
     - run: npm run tauri build -- --ci
     - name: Package tar.gz (Linux)
       run: |
