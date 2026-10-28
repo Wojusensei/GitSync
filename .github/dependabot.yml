@@ -5,8 +5,41 @@ updates:
     directory: /src-tauri
     schedule:
       interval: weekly
+    # 同时最多开 3 个 PR，避免首次扫描式刷屏；安全更新不受此限制
+    open-pull-requests-limit: 3
+    groups:
+      # tauri 及插件要跟 npm 侧同 minor，单独一组方便配对升级
+      tauri:
+        patterns:
+          - tauri
+          - tauri-*
+      # 其余 minor/patch 合成一个 PR；major 仍单独提，方便逐个看
+      minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - tauri
+          - tauri-*
+        update-types:
+          - minor
+          - patch
+
   # 前端 + 构建链（vite/postcss 等都在 devDependencies）
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      # @tauri-apps/api 与 Rust crate 必须同 minor，单独一组
+      tauri:
+        patterns:
+          - "@tauri-apps/*"
+      minor-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@tauri-apps/*"
+        update-types:
+          - minor
+          - patch
