@@ -9,7 +9,7 @@
 🌐 适配 macOS 和 Windows 以及大部分 Linux 的发行版 ，基于 Rust + Tauri 构建，性能爆炸💥
 
 > [!IMPORTANT]
-> **当前版本**：稳定版 version 0.3.4
+> **当前版本**：稳定版 version 0.3.5
 
 <img width="100%" src="https://starify.komoridevs.icu/api/starify?owner=Wojusensei&repo=Gitsync" alt="starify" />
 
