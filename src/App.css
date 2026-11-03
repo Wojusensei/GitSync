@@ -141,12 +141,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .app{position:relative;z-index:1;display:grid;grid-template-columns:280px 1fr;grid-template-rows:56px 1fr;height:100vh;gap:0}
 
 /* 顶部栏 - 超薄玻璃背景 */
-.topbar{grid-column:1/-1;background:var(--chrome);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border-bottom:1px solid var(--border);box-shadow:0 1px 0 var(--chrome-highlight);display:flex;align-items:center;padding:0 20px;gap:16px;z-index:10}
-.topbar h1{font-size:15px;font-weight:600;color:var(--text);letter-spacing:0.5px;display:flex;align-items:center;gap:10px;text-shadow:var(--text-shadow)}
-.topbar .path-input{flex:1;background:var(--panel-strong);border:1px solid var(--border-strong);border-radius:10px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;transition:all 0.3s;backdrop-filter:blur(10px)}
+.topbar{grid-column:1/-1;background:var(--chrome);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border-bottom:1px solid var(--border);box-shadow:0 1px 0 var(--chrome-highlight);display:flex;align-items:center;padding:0 20px;gap:16px;z-index:10;min-width:0}
+.topbar h1{font-size:15px;font-weight:600;color:var(--text);letter-spacing:0.5px;display:flex;align-items:center;gap:10px;text-shadow:var(--text-shadow);white-space:nowrap;flex-shrink:0}
+.topbar .path-input{flex:1;min-width:0;background:var(--panel-strong);border:1px solid var(--border-strong);border-radius:10px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;transition:all 0.3s;backdrop-filter:blur(10px)}
 .topbar .path-input:focus{border-color:var(--accent-border);background:var(--panel-strong);box-shadow:0 0 12px var(--accent-dim)}
 .topbar .path-input::placeholder{color:var(--text-faint)}
-.topbar button{background:var(--btn-primary-bg);border:1px solid var(--btn-primary-border);color:var(--on-accent);padding:7px 20px;border-radius:10px;font-size:13px;cursor:pointer;transition:all 0.3s;font-weight:600;backdrop-filter:blur(10px);position:relative;overflow:hidden}
+.topbar button{background:var(--btn-primary-bg);border:1px solid var(--btn-primary-border);color:var(--on-accent);padding:7px 20px;border-radius:10px;font-size:13px;cursor:pointer;transition:all 0.3s;font-weight:600;backdrop-filter:blur(10px);position:relative;overflow:hidden;white-space:nowrap;flex-shrink:0}
 .topbar button:hover{background:var(--btn-primary-bg-hover);border-color:var(--btn-primary-border-hover);box-shadow:var(--accent-glow)}
 .topbar button:active{transform:scale(0.96)}
 

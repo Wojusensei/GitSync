@@ -567,9 +567,9 @@ function App() {
             <VscFolderOpened size={18} />
           </button>
           <input className="path-input" type="text" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="输入仓库路径..." onKeyDown={(e) => e.key === 'Enter' && loadRepo()} />
-          <div style={{ display: 'flex', gap: 8, flex: 1 }}>
-            <input className="path-input" type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索提交..." onKeyDown={(e) => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', whiteSpace: 'nowrap' }} title="搜索所有分支、标签与 stash">
+          <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 0 }}>
+            <input className="path-input" type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索提交..." onKeyDown={(e) => e.key === 'Enter' && handleSearch()} style={{ flex: 1, minWidth: 0 }} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }} title="搜索所有分支、标签与 stash">
               <input type="checkbox" checked={searchAllRefs} onChange={e => setSearchAllRefs(e.target.checked)} />
               全部分支
             </label>
