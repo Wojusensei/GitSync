@@ -6,14 +6,17 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "title": "GitSync",
-        "width": 800,
-        "height": 600
+        "width": 1100,
+        "height": 720,
+        "minWidth": 860,
+        "minHeight": 560
       }
     ],
     "security": {
