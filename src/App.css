@@ -69,7 +69,8 @@
   --overlay-text:#e9eef7;
   --overlay-text-dim:rgba(233,238,247,0.6);
 }
-:root[data-theme='light']{
+:root[data-theme='light'],
+:root[data-theme='soft']{
   --bg:#f0f0f0;
   --text:#1f2430;
   --text-secondary:rgba(31,36,48,0.78);
