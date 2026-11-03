@@ -101,6 +101,21 @@ jobs:
           cd src-tauri/target/${{ matrix.target }}/release
           tar -czf "bundle/GitSync-${VERSION}-linux-x86_64.tar.gz" GitSync
 
+      - name: Build Arch Linux package
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          cp src-tauri/target/${{ matrix.target }}/release/GitSync aur/
+          sed -i "s/^pkgver=.*/pkgver=$VERSION/" aur/PKGBUILD
+          docker run --rm -v "$PWD/aur:/pkg" -w /pkg archlinux:latest bash -c "
+            pacman -Syu --noconfirm base-devel
+            useradd -m builder
+            chown -R builder:builder /pkg
+            su builder -c 'makepkg -fd --noconfirm'
+          "
+          mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/arch
+          cp aur/gitsync-[0-9]*.pkg.tar.zst src-tauri/target/${{ matrix.target }}/release/bundle/arch/
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -108,6 +123,7 @@ jobs:
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*
             src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*
+            src-tauri/target/${{ matrix.target }}/release/bundle/arch/*
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*
