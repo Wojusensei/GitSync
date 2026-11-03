@@ -16,12 +16,13 @@ export default function SemanticSearch({ repoPath }: { repoPath: string }) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [allRefs, setAllRefs] = useState(false);
 
   const handleSearch = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await invoke<SearchResult[]>('semantic_search', { path: repoPath, query });
+      const res = await invoke<SearchResult[]>('semantic_search', { path: repoPath, query, allRefs });
       setResults(res);
     } catch (e: any) {
       setError(String(e));
@@ -31,10 +32,14 @@ export default function SemanticSearch({ repoPath }: { repoPath: string }) {
   return (
     <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
       <h3>语义代码搜索</h3>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <input className="path-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索代码内容..." style={{ flex: 1 }} />
         <button className="btn btn-blue" onClick={handleSearch} disabled={loading}>搜索</button>
       </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-dim)', marginBottom: 12, cursor: 'pointer' }}>
+        <input type="checkbox" checked={allRefs} onChange={e => setAllRefs(e.target.checked)} />
+        包含所有分支与标签
+      </label>
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}
       {results.length === 0 && !loading && !error && (
         <div className="analysis-item" style={{ color: 'var(--text-dim)' }}>没有匹配结果，输入内容后点击搜索</div>

@@ -9,7 +9,7 @@ import { DEFAULT_BG_BASE64 } from './assets/defaultBg';
 import { parseAndRenderDiff } from './utils/diffUtils';
 import { useLatestRequest } from './hooks/useLatestRequest';
 import { pickBackgroundImage } from './utils/backgroundImage';
-import WelcomeModal from './components/WelcomeModal';  // <^welcome弹窗组件!thanks to @GuGulsNotAPigeon &>
+import WelcomeModal from './components/WelcomeModal';  // 欢迎弹窗，感谢 @GuGuIsNotAPigeon
 
 import SemanticSearch from './components/SemanticSearch';
 import DiffViewer from './components/DiffViewer';
@@ -33,6 +33,8 @@ import QueryConsole from './components/QueryConsole';
 import TimeMachine from './components/TimeMachine';
 import UIManager from './components/UIManager';
 import ContributorAvatar from './components/ContributorAvatar';
+import CommitHeatmap from './components/CommitHeatmap';
+import KnowledgeReport from './components/KnowledgeReport';
 
 interface Commit {
   hash: string;
@@ -132,6 +134,7 @@ function App() {
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchAllRefs, setSearchAllRefs] = useState(false);
   const { ripples, createRipple } = useRipple();
 
   // 分页状态
@@ -142,7 +145,7 @@ function App() {
 
   const [order, setOrder] = useState<number[]>([]);
   const dragConstraintRef = useRef<HTMLDivElement>(null);
-  // 各列表槽位的 DOM 引用：拖拽落点按真实卡片高度计算（卡片高度随消息折行变化，固定 60px 会放错位置）
+  // 槽位 DOM 引用，拖拽按真实卡片高度计算落点
   const slotRefs = useRef<Map<number, HTMLElement>>(new Map());
   const mainRef = useRef<HTMLDivElement>(null);
 
@@ -151,12 +154,11 @@ function App() {
   const springX = useSpring(pointerX, { stiffness: 200, damping: 30 });
   const springY = useSpring(pointerY, { stiffness: 200, damping: 30 });
 
-  // File changes browsing state
+  // 文件浏览状态
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
   const [viewMode, setViewMode] = useState<'single' | 'list'>('single');
 
-  // 分页加载函数（pathOverride：打开文件夹/多仓库切换时显式传新路径，
-  // 避免 useCallback 闭包读到旧的 repoPath）
+  // pathOverride：打开文件夹/切仓库时传新路径，避免闭包读到旧 repoPath
   const loadCommitsPage = useCallback(async (pageNum: number, reset: boolean, pathOverride?: string) => {
     const targetPath = pathOverride ?? repoPath;
     if (!targetPath.trim()) return;
@@ -186,7 +188,7 @@ function App() {
       setHasMore((pageNum + 1) * PAGE_SIZE < total);
       setTotalCommits(total);
     } catch (e: any) {
-      // Tauri IPC 层错误可能是 Error 对象，塞进 state 会让 React 渲染崩溃
+      // IPC 错误转成字符串，直接塞 state 会让 React 渲染崩溃
       setError(String(e));
       if (reset) { setCommits([]); }
     } finally { setLoading(false); }
@@ -209,7 +211,7 @@ function App() {
   const [activeTimeline, setActiveTimeline] = useState<string | null>(null);
   const [timelineData, setTimelineData] = useState<FileTimelineEntry[]>([]);
 
-  // <^+（preset / md / custom）=> localStorage&>
+  // 背景风格持久化
   const [bgStyle, setBgStyle] = useState<'preset' | 'md' | 'custom'>(() => {
     const saved = localStorage.getItem('bgStyle') as 'preset' | 'md' | 'custom' | null;
     return saved || 'preset';
@@ -218,7 +220,7 @@ function App() {
   // UI 状态（全局生效，不会因为切换面板而重置）
   const [bgOpacity, setBgOpacity] = useState(() => Number(localStorage.getItem('bg_opacity') || '0.9'));
   const [bgBase64, setBgBase64] = useState(() => localStorage.getItem('bg_base64') || DEFAULT_BG_BASE64);
-  // 默认 replace（手风琴：同时只开一个面板）；老用户在 UI 管理里显式选过 stack 则尊重其选择
+  // 默认手风琴；老用户显式选过叠加则尊重
   const [panelMode, setPanelMode] = useState<'stack' | 'replace'>(() => (localStorage.getItem('panel_mode') as 'stack' | 'replace') || 'replace');
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const [torchSize, setTorchSize] = useState(() => Number(localStorage.getItem('torch_size') || '100'));
@@ -227,6 +229,8 @@ function App() {
   const [showHealth, setShowHealth] = useState(false);
   const [showContributors, setShowContributors] = useState(false);
   const [showHotFiles, setShowHotFiles] = useState(false);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showKnowledge, setShowKnowledge] = useState(false);
   const [showStash, setShowStash] = useState(false);
   const [showRebase, setShowRebase] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
@@ -258,7 +262,7 @@ function App() {
     search_export: false,
     advanced: false
   });
-  // 手风琴：同一时刻侧栏最多展开一个分组；再点已展开的分组则收起
+  // 侧栏手风琴：同时只开一个分组
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
       if (prev[section]) return { ...prev, [section]: false };
@@ -282,6 +286,7 @@ function App() {
   // 替换模式：关闭所有面板
   const closeAllPanels = () => {
     setShowHealth(false); setShowContributors(false); setShowHotFiles(false);
+    setShowHeatmap(false); setShowKnowledge(false);
     setShowStash(false); setShowRebase(false); setShowGraph(false);
     setShowFileTree(false); setShowCommitFilter(false); setShowTagManager(false);
     setShowRemoteManager(false); setShowMultiRepo(false); setShowSyntaxHighlight(false);
@@ -293,8 +298,7 @@ function App() {
     setActivePanelId(null);
   };
 
-  // 面板统一开关入口：replace（手风琴）模式下开新面板先关其它面板；
-  // activePanelId 驱动侧栏条目高亮和右下角「关闭面板」按钮
+  // 统一开关入口：手风琴模式下开新面板先关其它面板
   const openPanel = (id: string, setter: (v: boolean) => void) => {
     if (panelMode === 'replace') closeAllPanels();
     setter(true);
@@ -343,8 +347,7 @@ function App() {
       const path = await invoke<string>('open_folder_dialog');
       if (path) {
         setRepoPath(path);
-        // 显式传入新路径：闭包里的 loadRepo 读到的是旧 repoPath，
-        // 首次打开时为空串会直接 return，导致选择文件夹后什么都不加载
+        // 显式传新路径，闭包里的 repoPath 还是旧值
         await loadRepo(path);
       }
     } catch (e: any) {
@@ -414,7 +417,7 @@ function App() {
     setCurrentFileIndex(0);
     setDetailLoading(true);
     setToast(null);
-    // 快速连点两个提交时，慢的旧响应不得覆盖新详情、不得提前撤掉加载态
+    // 只接受最新一次请求的响应
     const stillLatest = isLatestDetail();
     try {
       const detail = await invoke<CommitDetail>('get_commit_detail', { path: repoPath, commitHash: hash });
@@ -432,9 +435,9 @@ function App() {
     setLoading(true);
     setToast(null);
     try {
-      const result = await invoke<Commit[]>('search_commits', { path: repoPath, query: searchQuery });
+      const result = await invoke<Commit[]>('search_commits', { path: repoPath, query: searchQuery, allRefs: searchAllRefs });
       setCommits(result);
-      // 搜索结果是独立的筛选视图（上限 50 条），与分页流无关
+      // 搜索结果是独立视图，与分页无关
       setHasMore(false);
       setTotalCommits(result.length);
       setSelectedCommit(null);
@@ -478,7 +481,7 @@ function App() {
     </div>
   );
 
-  // <^首启检测：localStorage not have hasSeenWelcome => yes&>
+  // 首次启动检查
   const [showWelcome, setShowWelcome] = useState(() => {
     return localStorage.getItem('hasSeenWelcome') !== 'true';
   });
@@ -495,7 +498,6 @@ function App() {
     setShowWelcome(false);
   };
 
-  // <^原handlePickBackground => 独立函数&>
   const handlePickBackgroundDirect = async (): Promise<boolean> => {
     try {
       const b64 = await pickBackgroundImage();
@@ -567,6 +569,10 @@ function App() {
           <input className="path-input" type="text" value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="输入仓库路径..." onKeyDown={(e) => e.key === 'Enter' && loadRepo()} />
           <div style={{ display: 'flex', gap: 8, flex: 1 }}>
             <input className="path-input" type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索提交..." onKeyDown={(e) => e.key === 'Enter' && handleSearch()} style={{ flex: 1 }} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', whiteSpace: 'nowrap' }} title="搜索所有分支、标签与 stash">
+              <input type="checkbox" checked={searchAllRefs} onChange={e => setSearchAllRefs(e.target.checked)} />
+              全部分支
+            </label>
             <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.95 }} onClick={handleSearch} style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', color: 'var(--accent)', padding: '7px 12px', borderRadius: 10, cursor: 'pointer' }}>
               <VscSearch size={16} />
             </motion.button>
@@ -621,6 +627,8 @@ function App() {
                 <div className={`branch-item ${activePanelId === 'health' ? 'panel-open' : ''}`} onClick={() => { loadHealthReport(); setScrollToPanelId('panel-health'); }}>仓库健康</div>
                 <div className={`branch-item ${activePanelId === 'contributors' ? 'panel-open' : ''}`} onClick={() => { loadContributors(); setScrollToPanelId('panel-contributors'); }}>贡献者统计</div>
                 <div className={`branch-item ${activePanelId === 'hotfiles' ? 'panel-open' : ''}`} onClick={() => { loadHotFiles(); setScrollToPanelId('panel-hotfiles'); }}>热点文件</div>
+                <div className={`branch-item ${activePanelId === 'heatmap' ? 'panel-open' : ''}`} onClick={() => togglePanel('heatmap', 'panel-heatmap', showHeatmap, setShowHeatmap)}>提交热力图</div>
+                <div className={`branch-item ${activePanelId === 'knowledge' ? 'panel-open' : ''}`} onClick={() => togglePanel('knowledge', 'panel-knowledge', showKnowledge, setShowKnowledge)}>知识集中度</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -904,6 +912,10 @@ function App() {
             </motion.div>
           )}
 
+          {showHeatmap && <div id="panel-heatmap"><CommitHeatmap repoPath={repoPath} /></div>}
+
+          {showKnowledge && <div id="panel-knowledge"><KnowledgeReport repoPath={repoPath} /></div>}
+
           {showStash && (
             <motion.div id="panel-stash" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
               <h3>Stash 列表</h3>
@@ -971,6 +983,8 @@ function App() {
         { id: 'health', label: '仓库健康报告', action: () => loadHealthReport() },
         { id: 'contributors', label: '贡献者统计', action: () => loadContributors() },
         { id: 'hotfiles', label: '热点文件', action: () => loadHotFiles() },
+        { id: 'heatmap', label: '提交热力图', action: () => openPanel('heatmap', setShowHeatmap) },
+        { id: 'knowledge', label: '知识集中度', action: () => openPanel('knowledge', setShowKnowledge) },
         { id: 'stash', label: 'Stash 管理', action: () => loadStashList() },
         { id: 'rebase', label: '交互 Rebase', action: () => loadRebaseCommits() },
         { id: 'semantic', label: '语义搜索', action: () => openPanel('semantic', setShowSemanticSearch) },
@@ -998,7 +1012,7 @@ function App() {
         isOpen={showWelcome}
         onSelect={handleWelcomeSelect}
         onClose={() => {
-          // <^关闭弹窗without选择 => 使用 preset&>
+          // 不选则用预设
           setBgStyle('preset');
           localStorage.setItem('bgStyle', 'preset');
           localStorage.setItem('hasSeenWelcome', 'true');

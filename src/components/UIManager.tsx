@@ -18,7 +18,7 @@ interface UIManagerProps {
   setBgStyle: (v: 'preset' | 'md' | 'custom') => void;
   // 返回是否成功选图：用户取消时调用方据此保持原背景风格
   onPickCustomBackground: () => Promise<boolean>;
-  bgBase64: string;   // <^++新增：用于自定义缩略图&>
+  bgBase64: string;   // 自定义背景缩略图
 }
 
 export default function UIManager({
@@ -30,7 +30,7 @@ export default function UIManager({
   torchSize, setTorchSize,
   bgStyle, setBgStyle,
   onPickCustomBackground,
-  bgBase64,   // <^新增&>
+  bgBase64,
 }: UIManagerProps) {
   const [customBgError, setCustomBgError] = useState('');
   const [bgPreview, setBgPreview] = useState<string | null>(null);

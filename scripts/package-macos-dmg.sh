@@ -24,9 +24,7 @@ if [ -n "$TARGET" ]; then
 fi
 
 SIGNED=0
-# 公证凭据先转存为 NOTARY_*：下方 unset APPLE_ID 等是为了避免 Tauri CLI
-# 在 build 时自动公证，凭据留给本脚本最后统一使用。
-# 此前实现先 unset 再检查同名变量，导致配置了 secrets 也必然在公证前退出。
+# 凭据先转存：unset 是为了阻止 Tauri CLI 自动公证，留给脚本最后统一做
 NOTARY_APPLE_ID="${APPLE_ID:-}"
 NOTARY_APPLE_PASSWORD="${APPLE_PASSWORD:-}"
 NOTARY_APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
@@ -43,8 +41,7 @@ else
   unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
 fi
 
-# 由 release.yml 的仓库变量 REQUIRE_MACOS_SIGNING=1 打开：缺凭据时立刻失败，
-# 而不是静默降级成 ad-hoc 签名产出一个未公证的 DMG；默认关闭，未配证书时发布照常
+# REQUIRE_MACOS_SIGNING=1 时缺凭据直接失败，不静默降级成 ad-hoc 签名
 if [ "${REQUIRE_SIGNING:-0}" = "1" ] && [ "$SIGNED" -eq 0 ]; then
   echo "::error::REQUIRE_MACOS_SIGNING=1 但未配置 APPLE_CERTIFICATE，无法签名与公证；补齐凭据或取消该仓库变量"
   exit 1
@@ -59,8 +56,7 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
-# 公证 .app 本体（Apple 推荐）：先公证并 staple，用户把应用从 DMG
-# 复制出来后离线也能通过 Gatekeeper 校验
+# 先公证 .app 并 staple，从 DMG 拷出来也能离线通过 Gatekeeper
 if [ "$SIGNED" -eq 1 ]; then
   if [ -z "$NOTARY_APPLE_ID" ] || [ -z "$NOTARY_APPLE_PASSWORD" ] || [ -z "$NOTARY_APPLE_TEAM_ID" ]; then
     echo "::error::APPLE_CERTIFICATE 已配置，但缺少 APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID，无法公证"
@@ -88,7 +84,7 @@ hdiutil create -volname GitSync -srcfolder "$STAGING" -ov -format UDZO -imagekey
 rm -rf "$STAGING"
 trap - EXIT
 
-# DMG 同样公证并 staple（凭据已在应用公证前校验过）
+# DMG 同样公证并 staple
 if [ "$SIGNED" -eq 1 ]; then
   xcrun notarytool submit "$DMG" \
     --apple-id "$NOTARY_APPLE_ID" \

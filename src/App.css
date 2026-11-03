@@ -736,6 +736,20 @@ input[type="range"]::-moz-range-thumb:hover {
 .diff-inline-insert{background:var(--diff-inline-add);border-radius:2px}
 .diff-inline-delete{background:var(--diff-inline-del);border-radius:2px;text-decoration:line-through}
 
+/* 提交热力图 */
+.hm{width:12px;height:12px;border-radius:2px;background:var(--panel)}
+.hm-0{background:var(--panel)}
+.hm-1{background:var(--accent-dim)}
+.hm-2{background:var(--accent-soft)}
+.hm-3{background:var(--accent-border)}
+.hm-4{background:var(--accent)}
+
+/* 巴士因子徽标 */
+.bus-badge{font-size:11px;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.bus-1{background:var(--danger-dim);color:var(--danger)}
+.bus-2{background:var(--warn-dim);color:var(--warn)}
+.bus-3{background:var(--success-dim);color:var(--success)}
+
 /* 命令面板 */
 .cmd-overlay{position:fixed;inset:0;z-index:9999;background:rgba(4,6,12,0.5);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);display:flex;justify-content:center;padding-top:100px}
 .cmd-panel{width:520px;max-height:420px;overflow-y:auto;align-self:flex-start}

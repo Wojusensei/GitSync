@@ -14,7 +14,7 @@ function loadPaths(): string[] {
 }
 
 export default function MultiRepo({ onSelectRepo }: { onSelectRepo: (path: string) => void }) {
-  // 仓库列表持久化：此前是组件局部 state，面板一关就清空
+  // 列表跨会话保留
   const [paths, setPaths] = useState<string[]>(loadPaths);
   const [newPath, setNewPath] = useState('');
 

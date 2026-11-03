@@ -16,8 +16,7 @@ export default function GraphView({ repoPath, onSelectCommit }: { repoPath: stri
   const positionsRef = useRef<Record<string, { x: number; y: number }>>({});
   const commitsRef = useRef<GraphCommit[]>([]);
   const [error, setError] = useState('');
-  // 用 ref 持有最新回调：画布只在 repoPath 变化时重绘，
-  // 点击时始终取到最新的 onSelectCommit（避免首帧闭包里的旧 repoPath/selectedCommit）
+  // ref 持有最新回调，画布只在 repoPath 变化时重绘
   const onSelectRef = useRef(onSelectCommit);
   useEffect(() => {
     onSelectRef.current = onSelectCommit;
@@ -37,7 +36,7 @@ export default function GraphView({ repoPath, onSelectCommit }: { repoPath: stri
         canvas.height = commits.length * 40;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 画布颜色从 CSS 变量取：浅色主题下画布文字不再是浅灰看不清
+        // 画布颜色取自 CSS 变量，浅色主题下也看得清
         const css = getComputedStyle(document.documentElement);
         const accent = css.getPropertyValue('--accent').trim() || '#5B9BD5';
         const textCol = css.getPropertyValue('--text-secondary').trim() || '#c8d6e5';

@@ -1,6 +1,6 @@
 
 
-// Helper functions for diff syntax highlighting
+// diff 行的简单语法着色
 export function renderHighlightedLine(lineText: string) {
   const tokens: { text: string; type: string }[] = [];
   const tokenRegex = /(\/\/.*)|(".*?"|'.*?'|`.*?`)|(\b(?:const|let|var|function|return|import|export|from|default|class|interface|type|struct|fn|pub|use|impl|async|await|if|else|for|while|match|switch|case|break|continue|true|false|null|undefined|void|string|number|boolean|any|mut|use|mod|trait|static|ref|match|self|Self)\b)|(\b\d+\b)|([a-zA-Z_]\w*)|([^\s\w]+)|(\s+)/g;
@@ -109,7 +109,7 @@ export function parseAndRenderDiff(diffText: string) {
             </div>
           );
         } else {
-          // 未分类的行，可能是其他 git diff 格式 of the line, skip
+          // 未分类行直接跳过
           return null;
         }
       })}

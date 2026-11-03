@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-// 通过文件头魔数判断图片格式（后端返回的 base64 不带 MIME 信息）
+// 按魔数判断格式，后端返回的 base64 不带 MIME
 function sniffMime(b64: string): string {
   if (b64.startsWith('/9j/')) return 'image/jpeg';
   if (b64.startsWith('iVBORw0KGgo')) return 'image/png';
@@ -10,9 +10,7 @@ function sniffMime(b64: string): string {
   return 'image/jpeg';
 }
 
-// 原图 base64 可能好几 MB，直接塞 localStorage（约 5MB 配额）会抛 QuotaExceeded，
-// 且自定义背景目前只能存 localStorage。解码后等比缩到长边 ≤1920 再编码为
-// JPEG（质量 0.85），体积通常能压到几百 KB
+// 原图直接塞 localStorage 会爆配额，缩到长边 1920 再转 JPEG
 async function compressImageBase64(b64: string): Promise<string> {
   const img = new Image();
   img.src = `data:${sniffMime(b64)};base64,${b64}`;
@@ -30,8 +28,7 @@ async function compressImageBase64(b64: string): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] ?? b64;
 }
 
-// 弹出文件选择器并返回压缩后的 base64。
-// 用户取消/读取失败时 invoke 会抛错（取消信息含「取消」字样），由调用方决定提示方式
+// 选择并压缩背景图；用户取消或读取失败会抛错，由调用方决定怎么提示
 export async function pickBackgroundImage(): Promise<string> {
   const raw = await invoke<string>('pick_background_image');
   return compressImageBase64(raw);

@@ -7,13 +7,14 @@ export default function CommitFilter({ repoPath, onFiltered }: { repoPath: strin
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [filePath, setFilePath] = useState('');
+  const [allRefs, setAllRefs] = useState(false);
   const [error, setError] = useState('');
 
   const applyFilter = async () => {
     setError('');
     try {
       const res = await invoke<any[]>('filter_commits', {
-        path: repoPath, author: author || null, dateFrom: dateFrom || null, dateTo: dateTo || null, filePath: filePath || null
+        path: repoPath, author: author || null, dateFrom: dateFrom || null, dateTo: dateTo || null, filePath: filePath || null, allRefs
       });
       onFiltered(res);
     } catch (e: any) {
@@ -29,6 +30,10 @@ export default function CommitFilter({ repoPath, onFiltered }: { repoPath: strin
         <input className="path-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} placeholder="起始日期 (YYYY-MM-DD)" />
         <input className="path-input" value={dateTo} onChange={e => setDateTo(e.target.value)} placeholder="截止日期 (YYYY-MM-DD)" />
         <input className="path-input" value={filePath} onChange={e => setFilePath(e.target.value)} placeholder="文件路径" />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-dim)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={allRefs} onChange={e => setAllRefs(e.target.checked)} />
+          包含所有分支与标签
+        </label>
         <button className="btn btn-blue" onClick={applyFilter}>筛选</button>
         {error && <div style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</div>}
       </div>

@@ -17,7 +17,7 @@ export default function FileViewer({ repoPath, filePath, onClose }: FileViewerPr
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    // 快速切换文件时，慢的旧响应不得覆盖新文件内容
+    // 只接受最新一次请求的响应
     let cancelled = false;
     const fetchFileContent = async () => {
       setLoading(true);
@@ -37,7 +37,7 @@ export default function FileViewer({ repoPath, filePath, onClose }: FileViewerPr
 
   const lines = content.split('\n');
 
-  // Check if it's binary content
+  // 二进制内容简单探测
   const isBinary = content.includes('\u0000') || (content.length > 0 && content.slice(0, 1000).replace(/[\x09\x0A\x0D\x20-\x7E]/g, '').length / Math.min(1000, content.length) > 0.3);
 
   return (

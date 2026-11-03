@@ -7,8 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri_plugin_dialog::DialogExt;
 
-// 校验来自前端的相对路径：拒绝绝对路径、`..` 等非普通组件，防止目录穿越。
-// 返回仅含普通组件的相对路径，可安全 join 到受信目录下。
+// 只允许普通组件组成的相对路径，拒绝绝对路径和 ..
 fn safe_relative_path(untrusted: &str) -> Result<PathBuf, String> {
     let path = Path::new(untrusted);
     if path.is_absolute() {
@@ -27,7 +26,7 @@ fn safe_relative_path(untrusted: &str) -> Result<PathBuf, String> {
     Ok(cleaned)
 }
 
-// 在 base 下解析一个必须已存在的文件：canonicalize 后确保没有逃出 base（防符号链接穿越）。
+// canonicalize 后确认仍在 base 内，防符号链接穿越
 fn resolve_existing_under(base: &Path, relative: &Path) -> Result<PathBuf, String> {
     let base_canonical = base
         .canonicalize()
@@ -74,14 +73,12 @@ struct FileChange {
     diff: String,
 }
 
-// 提交遍历上限：主列表保持轻量，分析类功能放宽，SQL 查询按 diff 级别取折中
+// 各入口的提交遍历上限
 const MAIN_COMMIT_LIMIT: usize = 100;
 const ANALYSIS_COMMIT_LIMIT: usize = 2000;
 const QUERY_COMMIT_LIMIT: usize = 500;
 
-// 提交时间统一按本地时区格式化（与 git log 展示一致）；此前用
-// DateTime::from_timestamp（UTC），非 UTC 用户看到的时间整体偏移。
-// 时间超出 chrono 范围时回退「未知时间」
+// 本地时区时间，超出 chrono 范围回退「未知时间」
 fn format_local_time(seconds: i64) -> String {
     chrono::Local
         .timestamp_opt(seconds, 0)
@@ -111,9 +108,36 @@ fn sorted_revwalk(repo: &Repository) -> Result<git2::Revwalk<'_>, String> {
     Ok(revwalk)
 }
 
+// all_refs 时遍历全部分支/标签/stash，peel 到提交；默认只看 HEAD
+fn sorted_revwalk_refs(repo: &Repository, all_refs: bool) -> Result<git2::Revwalk<'_>, String> {
+    if !all_refs {
+        return sorted_revwalk(repo);
+    }
+    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
+    let refs = repo.references().map_err(|e| format!("无法获取引用: {}", e))?;
+    let mut pushed = false;
+    for reference in refs.flatten() {
+        if let Ok(commit) = reference.peel_to_commit() {
+            let _ = revwalk.push(commit.id());
+            pushed = true;
+        }
+    }
+    if !pushed {
+        return Err("仓库没有任何可遍历的引用".into());
+    }
+    revwalk
+        .set_sorting(Sort::TIME | Sort::TOPOLOGICAL)
+        .map_err(|e| format!("无法设置排序: {}", e))?;
+    Ok(revwalk)
+}
+
 fn collect_commits(repo: &Repository, limit: usize) -> Result<Vec<Commit>, String> {
+    collect_commits_refs(repo, limit, false)
+}
+
+fn collect_commits_refs(repo: &Repository, limit: usize, all_refs: bool) -> Result<Vec<Commit>, String> {
     let mut commits = Vec::new();
-    for oid in sorted_revwalk(repo)? {
+    for oid in sorted_revwalk_refs(repo, all_refs)? {
         let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
         let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
         commits.push(commit_to_json(oid, &commit));
@@ -215,9 +239,7 @@ fn checkout_branch(path: String, branch_name: String) -> Result<(), String> {
             .map_err(|e| format!("无法解析分支: {}", e))?
     };
 
-    // 顺序：先建本地分支/设上游（不触碰工作区），再更新工作区，最后移动 HEAD。
-    // 最可能失败的 checkout_tree 放在工作区未被改动之前；此前的顺序里
-    // 分支创建/设上游失败会留下「工作区已更新但 HEAD 未动」的半切换状态
+    // 先建分支设上游，再更新工作区，最后移动 HEAD；checkout_tree 失败时工作区保持原样
     if track {
         let mut local = repo
             .branch(&target, &commit, false)
@@ -264,7 +286,7 @@ async fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDe
             _ => "?",
         };
 
-        // 删除的文件 new_file 路径为 None，回退到 old_file，否则显示为「未知文件」
+        // 删除的文件 new_file 无路径，回退 old_file
         let path = delta
             .new_file()
             .path()
@@ -286,7 +308,7 @@ async fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDe
                     '-' => del += 1,
                     _ => {}
                 }
-                // 添加行前缀（+, -, 或空格）以便前端正确识别增删行
+                // 带 +/-/空格 前缀，前端据此识别增删行
                 diff_content.push(line.origin() as u8);
                 diff_content.extend_from_slice(line.content());
                 true
@@ -322,11 +344,11 @@ async fn get_commit_detail(path: String, commit_hash: String) -> Result<CommitDe
 }
 
 #[tauri::command]
-fn search_commits(path: String, query: String) -> Result<Vec<Commit>, String> {
+fn search_commits(path: String, query: String, all_refs: Option<bool>) -> Result<Vec<Commit>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
-    let all = collect_commits(&repo, ANALYSIS_COMMIT_LIMIT)?;
+    let all = collect_commits_refs(&repo, ANALYSIS_COMMIT_LIMIT, all_refs.unwrap_or(false))?;
     let query_lower = query.to_lowercase();
     let filtered: Vec<Commit> = all
         .into_iter()
@@ -348,7 +370,6 @@ struct BlameLine {
     content: String,
 }
 
-// 全文件逐行 blame，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 #[tauri::command]
 async fn get_blame(path: String, file_path: String) -> Result<Vec<BlameLine>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
@@ -423,7 +444,6 @@ async fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTi
     get_file_timeline_impl(&repo, &file_path)
 }
 
-// 全历史逐提交做 diff，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn get_file_timeline_impl(repo: &Repository, file_path: &str) -> Result<Vec<FileTimelineEntry>, String> {
     let revwalk = sorted_revwalk(repo)?;
 
@@ -459,8 +479,7 @@ fn get_file_timeline_impl(repo: &Repository, file_path: &str) -> Result<Vec<File
                     .map_err(|e| format!("Patch 创建失败: {}", e))?;
                 if let Some(mut p) = patch {
                     let mut diff_content = Vec::new();
-                    // 与 get_commit_detail 一致：每行加 origin 前缀（+/-/空格/@@），
-                    // 否则前端 parseAndRenderDiff 会把所有行当未分类丢弃，时间线 diff 显示为空
+                    // 带 origin 前缀，与 get_commit_detail 一致
                     p.print(&mut |_delta, _hunk, line| {
                         diff_content.push(line.origin() as u8);
                         diff_content.extend_from_slice(line.content());
@@ -502,7 +521,6 @@ struct HealthReport {
     conflicts: Vec<String>,
 }
 
-// 大文件扫描遍历 HEAD 树全量，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 #[tauri::command]
 async fn get_health_report(path: String) -> Result<HealthReport, String> {
     let expanded = shellexpand::tilde(&path).to_string();
@@ -511,8 +529,7 @@ async fn get_health_report(path: String) -> Result<HealthReport, String> {
     get_health_report_impl(&repo)
 }
 
-// 无上游的本地分支只有 tip 提交超过这个天数（即长期搁置）才算废弃；
-// 刚建的新分支没有 upstream 是常态，不应点名
+// 无上游且 tip 提交超过该天数的分支才算废弃
 const STALE_BRANCH_DAYS: i64 = 14;
 
 fn get_health_report_impl(repo: &Repository) -> Result<HealthReport, String> {
@@ -529,9 +546,7 @@ fn get_health_report_impl(repo: &Repository) -> Result<HealthReport, String> {
         }
     }
 
-    // 大文件扫描遍历 HEAD 树全量；此前只查 statuses 里的脏文件，干净仓库永远报不出。
-    // 只读对象头取大小：find_blob 会把 blob 完整解压进内存，扫一遍整棵树
-    // 等于把仓库内容全读一次（实测 128MB 数据 714ms / RSS +64MB，read_header 为 100µs）
+    // 只读对象头取大小，find_blob 会把整个 blob 解压进内存
     if let Ok(tree) = repo.head().and_then(|h| h.peel_to_tree()) {
         if let Ok(odb) = repo.odb() {
             let _ = tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
@@ -560,9 +575,7 @@ fn get_health_report_impl(repo: &Repository) -> Result<HealthReport, String> {
             if let Ok((branch, _)) = branch {
                 let name = branch.name().map_err(|e| format!("分支名错误: {}", e))?;
                 let name = name.unwrap_or("未知").to_string();
-                // 只看本地分支：远程跟踪分支天然没有 upstream 配置；
-                // 当前分支没有 upstream 是常态，不算废弃；
-                // tip 提交很新的分支说明还在活跃开发，也不算废弃
+                // 远程跟踪分支天然无 upstream；当前分支和活跃分支不算废弃
                 if Some(&name) != head_name.as_ref()
                     && branch.upstream().is_err()
                     && branch
@@ -584,6 +597,172 @@ fn get_health_report_impl(repo: &Repository) -> Result<HealthReport, String> {
     })
 }
 
+#[derive(Serialize, Debug)]
+struct CalendarDay {
+    date: String,
+    count: usize,
+}
+
+#[tauri::command]
+async fn get_commit_calendar(path: String, days: Option<usize>) -> Result<Vec<CalendarDay>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    get_commit_calendar_impl(&repo, days.unwrap_or(365))
+}
+
+// 按本地日期聚合；时钟偏斜时跳过而非提前 break，处理量封顶
+fn get_commit_calendar_impl(repo: &Repository, days: usize) -> Result<Vec<CalendarDay>, String> {
+    let cutoff = chrono::Utc::now().timestamp() - days as i64 * 24 * 3600;
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut processed = 0usize;
+
+    for oid in sorted_revwalk(repo)? {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+        let seconds = commit.time().seconds();
+        if seconds < cutoff {
+            continue;
+        }
+        let stamp = format_local_time(seconds);
+        // "未知时间" 等多字节串按字节切会 panic，get 在非字符边界返回 None
+        let date = stamp.get(..10).unwrap_or(stamp.as_str()).to_string();
+        *counts.entry(date).or_insert(0) += 1;
+
+        processed += 1;
+        if processed >= 20000 {
+            break;
+        }
+    }
+
+    let mut result: Vec<CalendarDay> = counts
+        .into_iter()
+        .map(|(date, count)| CalendarDay { date, count })
+        .collect();
+    result.sort_by(|a, b| a.date.cmp(&b.date));
+    Ok(result)
+}
+
+#[derive(Serialize, Debug)]
+struct DirectoryKnowledge {
+    path: String,
+    total_lines: usize,
+    authors: usize,
+    top_author: String,
+    top_share: f64,
+    bus_factor: usize,
+}
+
+// 逐提交统计各顶层目录的改动行数归属，近 1000 个提交
+#[tauri::command]
+async fn get_knowledge_report(path: String) -> Result<Vec<DirectoryKnowledge>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    get_knowledge_report_impl(&repo)
+}
+
+// 覆盖 50% 改动所需人数；1 表示单点依赖，根目录文件归入 "(root)"
+fn get_knowledge_report_impl(repo: &Repository) -> Result<Vec<DirectoryKnowledge>, String> {
+    let mut per_dir: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut processed = 0usize;
+
+    for oid in sorted_revwalk(repo)? {
+        let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
+        let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+        let author = commit.author().name().unwrap_or("未知").to_string();
+        let tree = commit.tree().map_err(|e| format!("无法获取树: {}", e))?;
+        let parent_tree = commit.parents().next().and_then(|p| p.tree().ok());
+
+        if let Ok(diff) = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None) {
+            let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
+            for (idx, delta) in deltas.iter().enumerate() {
+                let path = delta
+                    .new_file()
+                    .path()
+                    .or_else(|| delta.old_file().path());
+                let Some(path) = path else { continue };
+                let path_str = path.to_string_lossy();
+                let dir = match path_str.split_once('/') {
+                    Some((head, _)) => head.to_string(),
+                    None => "(root)".to_string(),
+                };
+                let (add, del) = git2::Patch::from_diff(&diff, idx)
+                    .ok()
+                    .flatten()
+                    .map(|mut p| {
+                        let mut add = 0;
+                        let mut del = 0;
+                        let _ = p.print(&mut |_delta, _hunk, line| {
+                            match line.origin() {
+                                '+' => add += 1,
+                                '-' => del += 1,
+                                _ => {}
+                            }
+                            true
+                        });
+                        (add, del)
+                    })
+                    .unwrap_or((0, 0));
+                if add + del == 0 {
+                    continue;
+                }
+                *per_dir
+                    .entry(dir)
+                    .or_default()
+                    .entry(author.clone())
+                    .or_insert(0) += add + del;
+            }
+        }
+
+        processed += 1;
+        if processed >= 1000 {
+            break;
+        }
+    }
+
+    let mut result = Vec::new();
+    for (dir, authors) in per_dir {
+        let total: usize = authors.values().sum();
+        if total == 0 {
+            continue;
+        }
+        let mut list: Vec<(String, usize)> = authors.into_iter().collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1));
+        let (top_author, top_lines) = list[0].clone();
+        let mut cumulative = 0usize;
+        let mut bus_factor = 0usize;
+        for (_, lines) in &list {
+            cumulative += *lines;
+            bus_factor += 1;
+            if (cumulative as f64) / (total as f64) > 0.5 {
+                break;
+            }
+        }
+        result.push(DirectoryKnowledge {
+            path: dir,
+            total_lines: total,
+            authors: list.len(),
+            top_author,
+            top_share: top_lines as f64 / total as f64,
+            bus_factor,
+        });
+    }
+
+    // 风险优先：巴士因子低、头部占比高、改动量大
+    result.sort_by(|a, b| {
+        a.bus_factor
+            .cmp(&b.bus_factor)
+            .then(
+                b.top_share
+                    .partial_cmp(&a.top_share)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(b.total_lines.cmp(&a.total_lines))
+    });
+    Ok(result)
+}
+
 #[derive(Serialize)]
 struct Contributor {
     author: String,
@@ -601,7 +780,6 @@ async fn get_contributors(path: String) -> Result<Vec<Contributor>, String> {
     get_contributors_impl(&repo)
 }
 
-// 逐提交做 diff 统计，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn get_contributors_impl(repo: &Repository) -> Result<Vec<Contributor>, String> {
     let revwalk = sorted_revwalk(repo)?;
 
@@ -639,8 +817,7 @@ fn get_contributors_impl(repo: &Repository) -> Result<Vec<Contributor>, String> 
             }
         }
 
-        // 上限针对处理的提交数（与 get_hot_files 一致）；原实现误用贡献者人数，
-        // 作者不足 50 人的仓库会遍历全部历史并逐提交做 diff，大仓库会长时间卡死
+        // 上限按处理的提交数计，避免大仓库逐提交 diff
         processed += 1;
         if processed >= 500 {
             break;
@@ -676,7 +853,6 @@ async fn get_hot_files(path: String) -> Result<Vec<HotFile>, String> {
     get_hot_files_impl(&repo)
 }
 
-// 逐提交做 diff 统计，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn get_hot_files_impl(repo: &Repository) -> Result<Vec<HotFile>, String> {
     let revwalk = sorted_revwalk(repo)?;
 
@@ -1021,16 +1197,15 @@ struct SearchResult {
 }
 
 #[tauri::command]
-async fn semantic_search(path: String, query: String) -> Result<Vec<SearchResult>, String> {
+async fn semantic_search(path: String, query: String, all_refs: Option<bool>) -> Result<Vec<SearchResult>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
-    semantic_search_impl(&repo, &query)
+    semantic_search_impl(&repo, &query, all_refs.unwrap_or(false))
 }
 
-// 全历史逐提交逐行扫描，属重活；async 命令运行在线程池，避免卡住 UI 主线程
-fn semantic_search_impl(repo: &Repository, query: &str) -> Result<Vec<SearchResult>, String> {
-    let revwalk = sorted_revwalk(repo)?;
+fn semantic_search_impl(repo: &Repository, query: &str, all_refs: bool) -> Result<Vec<SearchResult>, String> {
+    let revwalk = sorted_revwalk_refs(repo, all_refs)?;
 
     let mut results = Vec::new();
     let query_lower = query.to_lowercase();
@@ -1238,7 +1413,6 @@ struct TreeNode {
     children: Vec<TreeNode>,
 }
 
-// 全树递归构建，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 #[tauri::command]
 async fn get_file_tree(path: String) -> Result<Vec<TreeNode>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
@@ -1270,13 +1444,13 @@ async fn get_file_tree(path: String) -> Result<Vec<TreeNode>, String> {
     build_tree(&tree, &repo, "")
 }
 
-// 筛选含文件路径过滤时要做两遍全量 diff，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 #[tauri::command]
-async fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, file_path: Option<String>) -> Result<Vec<Commit>, String> {
+async fn filter_commits(path: String, author: Option<String>, date_from: Option<String>, date_to: Option<String>, file_path: Option<String>, all_refs: Option<bool>) -> Result<Vec<Commit>, String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
-    let all = collect_commits(&repo, ANALYSIS_COMMIT_LIMIT)?;
+    let all_refs = all_refs.unwrap_or(false);
+    let all = collect_commits_refs(&repo, ANALYSIS_COMMIT_LIMIT, all_refs)?;
     let filtered: Vec<Commit> = all.into_iter().filter(|c| {
         if let Some(ref a) = author { if !c.author.to_lowercase().contains(&a.to_lowercase()) { return false; } }
         if let Some(ref df) = date_from { if c.time < *df { return false; } }
@@ -1291,7 +1465,7 @@ async fn filter_commits(path: String, author: Option<String>, date_from: Option<
     // 文件路径筛选：先收集改动过该文件的提交集合，再交集过滤
     if let Some(ref fp) = file_path {
         if !fp.trim().is_empty() {
-            let touching = commits_touching_file(&repo, fp.trim(), ANALYSIS_COMMIT_LIMIT)?;
+            let touching = commits_touching_file(&repo, fp.trim(), ANALYSIS_COMMIT_LIMIT, all_refs)?;
             return Ok(filtered.into_iter().filter(|c| touching.contains(&c.hash)).collect());
         }
     }
@@ -1299,10 +1473,8 @@ async fn filter_commits(path: String, author: Option<String>, date_from: Option<
 }
 
 // 遍历历史，返回改动过指定文件的提交哈希集合（上限 limit 个提交）
-fn commits_touching_file(repo: &Repository, file_path: &str, limit: usize) -> Result<std::collections::HashSet<String>, String> {
-    let mut revwalk = repo.revwalk().map_err(|e| format!("无法创建 revwalk: {}", e))?;
-    revwalk.push_head().map_err(|e| format!("无法推送 HEAD: {}", e))?;
-    revwalk.set_sorting(Sort::TIME | Sort::TOPOLOGICAL).map_err(|e| format!("无法设置排序: {}", e))?;
+fn commits_touching_file(repo: &Repository, file_path: &str, limit: usize, all_refs: bool) -> Result<std::collections::HashSet<String>, String> {
+    let revwalk = sorted_revwalk_refs(repo, all_refs)?;
 
     let mut set = std::collections::HashSet::new();
     let mut processed = 0usize;
@@ -1413,8 +1585,7 @@ struct DiffDetail {
     new_content: String,
     hunks: Vec<DiffHunk>,
 }
-// 按字符（而非字节）计算新旧行的字词级差异。
-// 返回 (删除段，偏移基于旧行；插入段，偏移基于新行)，供前端做行内高亮
+// 返回 (删除段, 插入段)，偏移按字符计，供前端行内高亮
 fn paired_inline_changes(old_line: &str, new_line: &str) -> (Vec<InlineChange>, Vec<InlineChange>) {
     use similar::TextDiff;
     let mut deletes = Vec::new();
@@ -1462,8 +1633,7 @@ fn whole_line_changes(char_len: usize, kind: &str) -> Vec<InlineChange> {
     }
 }
 
-// 把缓冲的连续 -/+ 行按序号两两配对做字符级 diff，未配对的行整行高亮。
-// 输出顺序保持 diff 原样：先全部删除行，再全部插入行
+// 缓冲的 -/+ 行按序两两配对，未配对的整行高亮
 fn flush_paired_lines(
     current_lines: &mut Vec<DiffLine>,
     minus_buf: &mut Vec<String>,
@@ -1510,7 +1680,7 @@ fn get_diff_detail(path: String, commit_hash: String) -> Result<Vec<(String, Dif
     let mut results = Vec::new();
 
     for (idx, delta) in deltas.iter().enumerate() {
-        // 删除的文件 new_file 路径为 None，回退到 old_file，否则显示为「未知文件」
+        // 删除的文件回退到 old_file
         let new_path = delta.new_file().path();
         let old_path = delta.old_file().path();
         let file_path = new_path
@@ -1551,10 +1721,8 @@ fn get_diff_detail(path: String, commit_hash: String) -> Result<Vec<(String, Dif
                     '+' => {
                         plus_buf.push(String::from_utf8_lossy(line.content()).to_string());
                     }
+                    // 只在上下文/hunk 头/结尾结算；提前 flush 会破坏连续删除行的配对
                     '-' => {
-                        // 连续删除行继续进缓冲，与缓冲的插入行按序配对；
-                        // 缓冲只在上下文行/hunk 头/结尾处结算，提前 flush 会让
-                        // 连续删除行里除最后一行外全部退化为整行高亮
                         minus_buf.push(String::from_utf8_lossy(line.content()).to_string());
                     }
                     origin => {
@@ -1580,7 +1748,7 @@ fn get_diff_detail(path: String, commit_hash: String) -> Result<Vec<(String, Dif
     Ok(results)
 }
 
-// 把累积的行作为一个 hunk 收尾，old_lines/new_lines 按 origin 实际统计
+// 收尾当前 hunk，行数按 origin 统计
 fn flush_hunk(hunks: &mut Vec<DiffHunk>, lines: &mut Vec<DiffLine>, old_start: usize, new_start: usize) {
     if lines.is_empty() {
         return;
@@ -1618,14 +1786,13 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
     (old_start, old_lines, new_start, new_lines)
 }
 
-// 全历史 revwalk 统计总数，大仓库属重活；async 命令运行在线程池，避免卡住 UI 主线程
 #[tauri::command]
 async fn get_commits_paginated(path: String, page: usize, page_size: usize) -> Result<(Vec<Commit>, usize), String> {
     let expanded = shellexpand::tilde(&path).to_string();
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
 
-    // 单遍 revwalk：跳过前 start 个取一页，同时统计真实总数（此前被 100 条上限截断）
+    // 单遍遍历：跳过前 start 条取一页，顺便统计总数
     let start = page.saturating_mul(page_size);
     let end = start.saturating_add(page_size);
     let mut total = 0usize;
@@ -1728,7 +1895,7 @@ enum ConflictParseState {
 
 struct ParsedConflicts {
     blocks: Vec<ConflictBlock>,
-    // 每个冲突块之前的普通文本；长度恒为 blocks.len() + 1，最后一段是文件末尾的普通文本
+    // 冲突块之间的普通文本，长度恒为 blocks.len() + 1
     merged_parts: Vec<String>,
 }
 
@@ -1787,7 +1954,7 @@ fn parse_conflict_content(content: &str) -> ParsedConflicts {
     ParsedConflicts { blocks, merged_parts }
 }
 
-// 把每块的解决文本插回冲突原来的位置；空解决文本回退到 ours（与原有交互语义一致）
+// 解决文本插回原位；空文本回退 ours
 fn build_resolved_content(parsed: &ParsedConflicts, resolutions: &[String]) -> String {
     let mut out = String::new();
     for (i, block) in parsed.blocks.iter().enumerate() {
@@ -1925,7 +2092,7 @@ fn run_script_impl(path: &str, script_name: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-// 脚本可能长时间运行：阻塞进程等待放 spawn_blocking，避免卡住 async runtime / UI
+// 进程等待会阻塞线程，放 spawn_blocking
 #[tauri::command]
 async fn run_script(path: String, script_name: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || run_script_impl(&path, &script_name))
@@ -1933,9 +2100,7 @@ async fn run_script(path: String, script_name: String) -> Result<String, String>
         .map_err(|e| format!("脚本任务调度失败: {}", e))?
 }
 
-// ====================
-// SQL 查询引擎 v2 — 微型数据库
-// ====================
+// SQL 查询引擎
 
 #[derive(Serialize, Debug)]
 struct QueryResult {
@@ -2029,8 +2194,7 @@ fn collect_all_data(repo: &Repository) -> Result<(Vec<Commit>, Vec<FileChangeRow
     Ok((commits, files))
 }
 
-// 旧方言的 CONTAINS 改写为 SQLite 的 LIKE '%x%'（值中的 % _ \ 做转义）。
-// 字符串字面量内部不改写；CONTAINS 后面不是字符串字面量时原样保留，交给 SQLite 报语法错误。
+// CONTAINS 'x' 改写为 LIKE '%x%'（转义 % _ \），字符串字面量内不改写
 fn rewrite_contains(sql: &str) -> String {
     fn is_word_char(c: char) -> bool {
         c.is_alphanumeric() || c == '_'
@@ -2130,12 +2294,11 @@ fn format_sql_error(e: &rusqlite::Error, timeout: std::time::Duration) -> String
     }
 }
 
-// 单条查询的时间上限：控制台允许写多表连接和递归 CTE，没有中断手段时
-// 一次误操作就能把应用挂死（内存库跑飞后只能杀进程）
+// 查询超时；失控的递归 CTE 只能靠它中止
 const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-// 返回行数上限：两表自连接的行数是乘积，真实仓库的 file_changes 已足够撑爆内存
+// 返回行数上限；自连接的行数是乘积
 const QUERY_ROW_LIMIT: usize = 5000;
-// 单个值（字符串/BLOB）长度上限：hex(zeroblob(1e8)) 这类函数能一次产出几百 MB
+// 单值大小上限；hex(zeroblob(1e8)) 能一次产出几百 MB
 const QUERY_VALUE_LIMIT: i32 = 16 * 1024 * 1024;
 
 #[tauri::command]
@@ -2143,7 +2306,6 @@ async fn git_query(path: String, sql: String) -> Result<QueryResult, String> {
     git_query_impl(&path, &sql, QUERY_TIMEOUT, QUERY_ROW_LIMIT)
 }
 
-// 收集全量数据入内存 SQLite + 执行查询，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 fn git_query_impl(
     path: &str,
     sql: &str,
@@ -2216,8 +2378,7 @@ fn git_query_impl(
     }))
     .map_err(|e| format!("无法设置查询权限: {}", e))?;
 
-    // 中断手段：progress 回调返回 true 时 SQLite 以 SQLITE_INTERRUPT 中止语句。
-    // 行数上限拦不住「不出结果行但一直在算」的查询（如 count 套无限递归 CTE）
+    // progress 回调可中止「不出结果行但一直在算」的查询
     let deadline = std::time::Instant::now() + timeout;
     conn.progress_handler(100_000, Some(move || std::time::Instant::now() > deadline))
         .map_err(|e| format!("无法设置查询超时: {}", e))?;
@@ -2256,9 +2417,7 @@ fn git_query_impl(
     })
 }
 
-// ====================
 // Git 时间机器
-// ====================
 
 #[derive(Serialize)]
 struct TimeMachineSnapshot {
@@ -2300,7 +2459,6 @@ fn get_file_content(path: String, file_path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&content).to_string())
 }
 
-// 全历史 revwalk 找时间点，属重活；async 命令运行在线程池，避免卡住 UI 主线程
 #[tauri::command]
 async fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeMachineSnapshot, String> {
     let expanded = shellexpand::tilde(&path).to_string();
@@ -2332,7 +2490,7 @@ async fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeM
     let message = commit.message().unwrap_or("").to_string();
 
     let mut files = Vec::new();
-    // 与健康报告同理：大小只读对象头，拖滑块时不能把每个 blob 都解压一遍
+    // 只读对象头取大小，拖滑块时不逐个解压 blob
     let odb = repo.odb().map_err(|e| format!("无法打开对象库: {}", e))?;
     tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
         let name = entry.name().unwrap_or("未知");
@@ -2364,7 +2522,7 @@ async fn get_time_machine_snapshot(path: String, timestamp: i64) -> Result<TimeM
 
 #[tauri::command]
 async fn pick_background_image(app: tauri::AppHandle) -> Result<String, String> {
-    // blocking_pick_file 会阻塞线程，放到线程池避免卡住 async runtime / UI
+    // blocking_pick_file 会阻塞线程，放到线程池
     let file_path = tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .file()
@@ -2444,7 +2602,9 @@ fn main() {
             get_file_content,
             pick_background_image,
             open_folder_dialog,
-            git_query
+            git_query,
+            get_commit_calendar,
+            get_knowledge_report
         ])
         .run(tauri::generate_context!())
         .expect("启动失败");
@@ -2609,7 +2769,6 @@ mod query_tests {
 
     #[test]
     fn file_changes_table_is_queryable() {
-        // 回归：旧解析器把非 commits 主表的行全部丢弃，此查询永远返回 0 行
         let dir = tempfile::tempdir().unwrap();
         setup_repo(dir.path());
         let res = query(dir.path(), "SELECT COUNT(*) FROM file_changes").unwrap();
@@ -2618,7 +2777,7 @@ mod query_tests {
 
     #[test]
     fn per_file_stats_are_not_whole_commit_totals() {
-        // 回归：旧实现把整笔提交的总量（+2）写到每个文件行上
+        // 每个文件各自统计，不是整笔提交的总量
         let dir = tempfile::tempdir().unwrap();
         let (_h1, h2) = setup_repo(dir.path());
         let res = query(dir.path(), &format!(
@@ -2655,7 +2814,7 @@ mod query_tests {
 
     #[test]
     fn numeric_where_comparison() {
-        // 回归：旧实现按字符串比较，"9" > "10" 为真
+        // 按数值比较，不是字符串
         let dir = tempfile::tempdir().unwrap();
         setup_repo(dir.path());
         let res = query(dir.path(), "SELECT COUNT(*) FROM file_changes WHERE additions > 1").unwrap();
@@ -2666,7 +2825,7 @@ mod query_tests {
 
     #[test]
     fn limit_with_trailing_semicolon() {
-        // 回归：旧实现的 LIMIT 解析遇到分号会静默失效
+        // 分号结尾时 LIMIT 仍生效
         let dir = tempfile::tempdir().unwrap();
         setup_repo(dir.path());
         let res = query(dir.path(), "SELECT hash FROM commits LIMIT 1;").unwrap();
@@ -2675,7 +2834,7 @@ mod query_tests {
 
     #[test]
     fn malformed_sql_returns_error_instead_of_panicking() {
-        // 回归：旧解析器遇到关键词乱序会切片越界 panic，panic=abort 直接崩掉整个应用
+        // 关键词乱序应报错而不是 panic
         let dir = tempfile::tempdir().unwrap();
         setup_repo(dir.path());
         assert!(query(dir.path(), "SELECT hash WHERE message CONTAINS 'x FROM y'").is_err());
@@ -2719,8 +2878,8 @@ mod query_tests {
 
     #[test]
     fn changelog_with_unparseable_time_does_not_panic() {
-        // 回归：超出 chrono 范围的时间 -> "未知时间"（多字节），旧实现切片 [..10] 会 panic。
-        // git2 创建提交时会把时间截断成 32 位，因此直接写原始 commit 对象绕过创建路径。
+        // 时间无法解析时回退「未知时间」；git2 会把时间截断成 32 位，
+        // 这里直接写原始 commit 对象绕过创建路径
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         let blob = repo.blob(b"z\n").unwrap();
@@ -2911,7 +3070,11 @@ mod backend_fix_tests {
     use super::*;
 
     fn commit(repo: &git2::Repository, msg: &str, time_secs: i64, files: &[(&str, &str)]) -> String {
-        let sig = git2::Signature::new("alice", "a@b.c", &git2::Time::new(time_secs, 0)).unwrap();
+        commit_by(repo, "alice", msg, time_secs, files)
+    }
+
+    fn commit_by(repo: &git2::Repository, author: &str, msg: &str, time_secs: i64, files: &[(&str, &str)]) -> String {
+        let sig = git2::Signature::new(author, "a@b.c", &git2::Time::new(time_secs, 0)).unwrap();
         fn build(repo: &git2::Repository, files: &[(&str, &str)]) -> Result<git2::Oid, git2::Error> {
             let mut tb = repo.treebuilder(None)?;
             let mut dirs: std::collections::BTreeMap<String, Vec<(&str, &str)>> = std::collections::BTreeMap::new();
@@ -3001,7 +3164,7 @@ mod backend_fix_tests {
 
     #[test]
     fn diff_detail_pairs_consecutive_minus_lines() {
-        // 回归：'-' 分支提前 flush 缓冲，连续删除行中只有最后一行能与插入行配对
+        // 连续删除行都应参与配对，而不是整行高亮
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         commit(&repo, "base", 1_700_000_000, &[("a.txt", "keep0\nconst x = 1;\nconst y = 2;\nkeep3\n")]);
@@ -3041,9 +3204,9 @@ mod backend_fix_tests {
                 .format("%Y-%m-%d")
                 .to_string()
         };
-        let res = tauri::async_runtime::block_on(filter_commits(path.clone(), None, None, Some(day_of(1_760_086_400)), None)).unwrap();
+        let res = tauri::async_runtime::block_on(filter_commits(path.clone(), None, None, Some(day_of(1_760_086_400)), None, None)).unwrap();
         assert_eq!(res.len(), 2, "date_to 当天的提交不应被排除");
-        let res = tauri::async_runtime::block_on(filter_commits(path.clone(), None, None, Some(day_of(1_760_000_000)), None)).unwrap();
+        let res = tauri::async_runtime::block_on(filter_commits(path.clone(), None, None, Some(day_of(1_760_000_000)), None, None)).unwrap();
         assert_eq!(res.len(), 1);
     }
 
@@ -3057,7 +3220,7 @@ mod backend_fix_tests {
         let path = dir.path().to_str().unwrap().to_string();
 
         // 与 git log -- a.txt 语义一致：创建该文件的提交也算「改过」
-        let res = tauri::async_runtime::block_on(filter_commits(path, None, None, None, Some("a.txt".into()))).unwrap();
+        let res = tauri::async_runtime::block_on(filter_commits(path, None, None, None, Some("a.txt".into()), None)).unwrap();
         let hashes: std::collections::HashSet<String> = res.iter().map(|c| c.hash.clone()).collect();
         assert_eq!(hashes, [base, c2].into_iter().collect());
         assert!(!hashes.contains(&c3), "只改 b.txt 的提交不应命中");
@@ -3070,7 +3233,7 @@ mod backend_fix_tests {
         commit(&repo, "base", 1_700_000_000, &[("a.txt", "alpha\nbeta\n")]);
         commit(&repo, "add needle at line 3", 1_700_000_100, &[("a.txt", "alpha\nbeta\nneedle\n")]);
 
-        let res = semantic_search_impl(&repo, "needle").unwrap();
+        let res = semantic_search_impl(&repo, "needle", false).unwrap();
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].line_number, 3, "应报告真实行号而非匹配序号");
         assert_eq!(res[0].file_path, "a.txt");
@@ -3107,7 +3270,7 @@ mod backend_fix_tests {
 
     #[test]
     fn file_timeline_diff_has_line_prefixes() {
-        // 回归：timeline diff 不带 +/-/@@ 前缀时，前端 parseAndRenderDiff 会把所有行当未分类丢弃
+        // 带前缀，否则前端全部丢弃
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         commit(&repo, "base", 1_700_000_000, &[("a.txt", "alpha\n")]);
@@ -3122,6 +3285,100 @@ mod backend_fix_tests {
         assert!(diff.lines().any(|l| l.starts_with('+')), "新增行应带 + 前缀: {:?}", diff);
         assert!(diff.lines().any(|l| l.starts_with(' ')), "上下文行应带空格前缀: {:?}", diff);
         assert!(entries[1].diff.lines().any(|l| l.starts_with('+')), "首个提交的 diff 也应带前缀");
+    }
+
+    #[test]
+    fn search_commits_all_refs_finds_side_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let base = commit(&repo, "base", 1_700_000_000, &[("a.txt", "1\n")]);
+        let base_commit = repo.find_commit(Oid::from_str(&base).unwrap()).unwrap();
+        repo.branch("side", &base_commit, false).unwrap();
+
+        // 在 refs/heads/side 上追加一个只属于该分支的提交（不切换 HEAD）
+        let sig = git2::Signature::new("alice", "a@b.c", &git2::Time::new(1_700_000_200, 0)).unwrap();
+        let mut tb = repo.treebuilder(Some(&base_commit.tree().unwrap())).unwrap();
+        let blob = repo.blob(b"lost\n").unwrap();
+        tb.insert("lost.txt", blob, 0o100644).unwrap();
+        let tree = repo.find_tree(tb.write().unwrap()).unwrap();
+        let lost = repo
+            .commit(Some("refs/heads/side"), &sig, &sig, "lost commit", &tree, &[&base_commit])
+            .unwrap();
+
+        let path = dir.path().to_str().unwrap().to_string();
+        let res = search_commits(path.clone(), "lost commit".into(), None).unwrap();
+        assert!(res.is_empty(), "默认 HEAD 视角不应搜到 side 分支的提交");
+        let res = search_commits(path.clone(), "lost commit".into(), Some(true)).unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].hash, lost.to_string());
+
+        let res = tauri::async_runtime::block_on(filter_commits(
+            path, None, None, None, None, Some(true),
+        ))
+        .unwrap();
+        assert!(res.iter().any(|c| c.hash == lost.to_string()), "筛选的全引用模式也应包含该提交");
+    }
+
+    #[test]
+    fn calendar_counts_commits_by_local_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        // 今天两个、昨天一个、400 天前一个（窗口外）
+        commit(&repo, "today a", now, &[("a.txt", "1\n")]);
+        commit(&repo, "today b", now, &[("a.txt", "2\n")]);
+        commit(&repo, "yesterday", now - 86400, &[("a.txt", "3\n")]);
+        commit(&repo, "old", now - 400 * 86400, &[("a.txt", "4\n")]);
+
+        let days = get_commit_calendar_impl(&repo, 365).unwrap();
+        let day_of = |secs: i64| {
+            chrono::Local
+                .timestamp_opt(secs, 0)
+                .single()
+                .unwrap()
+                .format("%Y-%m-%d")
+                .to_string()
+        };
+        let today = day_of(now);
+        let got_today = days.iter().find(|d| d.date == today).map(|d| d.count).unwrap_or(0);
+        assert_eq!(got_today, 2, "今天应有 2 个提交，实际: {:?}", days);
+        assert!(
+            !days.iter().any(|d| d.date == day_of(now - 400 * 86400)),
+            "窗口外的提交不应出现，实际: {:?}",
+            days
+        );
+    }
+
+    #[test]
+    fn knowledge_report_computes_bus_factor() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        // commit() 辅助每次从零建树，后一笔要把前面的文件一起带上，避免整个仓库被「删掉重加」
+        let ten: String = (1..=10).map(|i| format!("l{}\n", i)).collect();
+        let five: String = (1..=5).map(|i| format!("d{}\n", i)).collect();
+        let base_files: &[(&str, &str)] = &[("src/a.txt", &ten)];
+        let with_bob: &[(&str, &str)] = &[("src/a.txt", &ten), ("src/b.txt", "x\n")];
+        let with_carol: &[(&str, &str)] = &[("src/a.txt", &ten), ("src/b.txt", "x\n"), ("docs/a.md", &five)];
+        let with_dave: &[(&str, &str)] = &[
+            ("src/a.txt", &ten),
+            ("src/b.txt", "x\n"),
+            ("docs/a.md", &five),
+            ("docs/b.md", &five),
+        ];
+        commit_by(&repo, "alice", "alice src", 1_700_000_000, base_files);
+        commit_by(&repo, "bob", "bob src", 1_700_000_100, with_bob);
+        commit_by(&repo, "carol", "carol docs", 1_700_000_200, with_carol);
+        commit_by(&repo, "dave", "dave docs", 1_700_000_300, with_dave);
+
+        let report = get_knowledge_report_impl(&repo).unwrap();
+        let src = report.iter().find(|d| d.path == "src").expect("应有 src 目录");
+        assert_eq!(src.bus_factor, 1, "src 应由 alice 单点维护，实际: {:?}", report);
+        assert_eq!(src.top_author, "alice");
+        assert!(src.top_share > 0.8, "alice 占比应超过 80%，实际: {}", src.top_share);
+
+        let docs = report.iter().find(|d| d.path == "docs").expect("应有 docs 目录");
+        assert_eq!(docs.bus_factor, 2, "docs 需要 carol+dave 两人覆盖过半，实际: {:?}", report);
+        assert_eq!(docs.authors, 2);
     }
 
     #[test]
@@ -3140,7 +3397,7 @@ mod backend_fix_tests {
             snap.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>()
         );
         assert!(snap.files.iter().any(|f| f.path == "docs"));
-        // 回归：大小改为只读对象头后仍需给出真实值（取失败会退化成 0）
+        // 大小应取自对象头而非 0
         let root = snap.files.iter().find(|f| f.path == "root.txt").expect("应有 root.txt");
         assert_eq!(root.size, 2, "文件大小应取对象头而非 0，实际 {} 字节", root.size);
     }
@@ -3219,7 +3476,7 @@ mod backend_fix_tests {
         assert_eq!(get_commits(path.clone(), Some(5)).unwrap().len(), 5);
         assert_eq!(get_commits(path.clone(), None).unwrap().len(), MAIN_COMMIT_LIMIT);
 
-        let res = search_commits(path, "msg 145".into()).unwrap();
+        let res = search_commits(path, "msg 145".into(), None).unwrap();
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].hash, hashes[145], "第 145 条提交应能被搜到（旧实现只见前 100 条）");
     }

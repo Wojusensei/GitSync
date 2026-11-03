@@ -34,12 +34,12 @@ export default function FileTree({ repoPath, onSelectFile }: { repoPath: string;
   const renderNode = (node: TreeNode, parentPath = '') => {
     const fullPath = parentPath ? `${parentPath}/${node.name}` : node.name;
 
-    // 渲染期不可变排序：直接 sort 会原地修改 state 里的节点数据
+    // 拷贝后排序，不原地改 state
     const sortedChildren = [...node.children].sort((a, b) => {
       if (a.is_directory !== b.is_directory) {
-        return b.is_directory ? 1 : -1; // 文件夹排在前面
+        return b.is_directory ? 1 : -1;
       }
-      return a.name.localeCompare(b.name); // 同类型按名字排序
+      return a.name.localeCompare(b.name);
     });
     return (
       <div key={fullPath} style={{ paddingLeft: parentPath ? 16 : 0 }}>
@@ -74,9 +74,9 @@ export default function FileTree({ repoPath, onSelectFile }: { repoPath: string;
       <div style={{ maxHeight: 400, overflowY: 'auto', marginTop: 12 }}>
         {[...nodes].sort((a, b) => {
           if (a.is_directory !== b.is_directory) {
-            return b.is_directory ? 1 : -1; // 文件夹排在前面
+            return b.is_directory ? 1 : -1;
           }
-          return a.name.localeCompare(b.name); // 同类型按名字排序
+          return a.name.localeCompare(b.name);
         }).map(n => renderNode(n))}
       </div>
     </motion.div>

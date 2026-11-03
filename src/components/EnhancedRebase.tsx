@@ -32,7 +32,7 @@ export default function EnhancedRebase({ repoPath, onComplete }: { repoPath: str
     }
   };
 
-  // 不可变更新：直接改 ops 里的对象会绕过 React 的状态比对
+  // 不可变更新，直接改对象会绕过 React 比对
   const updateOp = (idx: number, patch: Partial<RebaseOperation>) => {
     setOps(prev => prev.map((op, i) => (i === idx ? { ...op, ...patch } : op)));
   };
@@ -42,7 +42,7 @@ export default function EnhancedRebase({ repoPath, onComplete }: { repoPath: str
       setError('请先加载提交');
       return;
     }
-    // 后端要求 squash 前必须有 pick/reword；拖拽 reorder 可能把 squash 行拖到首位，提前拦截
+    // squash 需要有合并对象；拖拽可能把它挪到首位
     if (ops[0]?.action === 'squash') {
       setError('第一个提交不能是 squash，请先选一个 pick/reword 开头，或调整顺序');
       return;

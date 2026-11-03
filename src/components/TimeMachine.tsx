@@ -16,10 +16,8 @@ interface TimeMachineSnapshot {
   files: TimeMachineFile[];
 }
 
-// 后端返回 "YYYY-MM-DD HH:MM:SS"，并已按提交者本地时区格式化（与 git log 一致）。
-// `new Date("... ...")` 这种空格分隔格式在 WKWebView（macOS）返回 Invalid Date，
-// 且 Chromium 会按 UTC 解析 "YYYY-MM-DD HH:MM:SS" —— 这里按本地时区手动解析，
-// 得到的时间戳才能与提交的原始 unix 秒对上（滑块用 unix 秒比较，与时区无关）
+// 后端返回本地时区的 "YYYY-MM-DD HH:MM:SS"。空格格式在 WKWebView 里是
+// Invalid Date，手动按本地时区解析，才能和提交的 unix 秒对上
 function parseGitTime(s: string): number {
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(s.trim());
   if (!m) return NaN;
@@ -38,7 +36,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   const intervalRef = useRef<number | null>(null);
   // 快照请求序号：播放时 200ms 一发不等返回，晚到的旧响应会覆盖新快照
   const snapshotSeqRef = useRef(0);
-  // 播放中调速：interval 闭包里读 ref，避免 startPlay 捕获过期的 playSpeed
+  // 播放中调速：interval 里读 ref，避免闭包拿到旧值
   const playSpeedRef = useRef(1);
   useEffect(() => { playSpeedRef.current = playSpeed; }, [playSpeed]);
 
@@ -60,7 +58,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
     loadTimeRange();
   }, [repoPath]);
 
-  // 组件卸载（面板关闭）时停掉播放定时器，否则 setInterval 会带着 setState 空转
+  // 卸载时停掉定时器
   useEffect(() => {
     return () => {
       if (intervalRef.current !== null) clearInterval(intervalRef.current);

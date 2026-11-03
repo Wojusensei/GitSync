@@ -36,8 +36,7 @@ export default function QueryConsole({ repoPath }: { repoPath: string }) {
     }
   };
 
-  // 以 = + - @ 或制表符开头的单元格在 Excel/WPS 里会被当公式执行（CSV 公式注入），
-  // commit message 来自任意仓库，导出前加前缀使其按文本处理
+  // 防 CSV 公式注入：= + - @ 开头的单元格加前缀
   const safeCsvCell = (cell: string) => (/^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell);
 
   const exportCSV = () => {

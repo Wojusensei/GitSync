@@ -28,7 +28,7 @@ interface DiffDetail {
   hunks: DiffHunk[];
 }
 
-// 按后端给的字符偏移把行内变化段高亮出来（Array.from 按码点切，与后端 chars().count() 对齐）
+// 按字符偏移高亮行内变化（Array.from 与后端 chars 对齐）
 function renderInline(content: string, changes: InlineChange[] | undefined, kind: 'insert' | 'delete') {
   const chars = Array.from(content);
   const marked = new Array<boolean>(chars.length).fill(false);
