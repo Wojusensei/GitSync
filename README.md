@@ -72,27 +72,27 @@
 
 ### macOS
 
-[GitSync_0.3.4_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.3.4/GitSync_0.3.4_aarch64.dmg)
+[GitSync_0.3.5_aarch64.dmg](https://github.com/Wojusensei/GitSync/releases/download/v0.3.5/GitSync_0.3.5_aarch64.dmg)
 
 ### Windows
 
-[GitSync_0.3.4_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.3.4/GitSync_0.3.4_x64-setup.exe)
+[GitSync_0.3.5_x64-setup.exe](https://github.com/Wojusensei/GitSync/releases/download/v0.3.5/GitSync_0.3.5_x64-setup.exe)
 
 ### Linux (Debian / Ubuntu)
 
-[GitSync_0.3.4_amd64.deb](https://github.com/Wojusensei/GitSync/releases/download/v0.3.4/GitSync_0.3.4_amd64.deb)
+[GitSync_0.3.5_amd64.deb](https://github.com/Wojusensei/GitSync/releases/download/v0.3.5/GitSync_0.3.5_amd64.deb)
 
 ### Linux (Fedora / RHEL)
 
-[GitSync-0.3.4-1.x86_64.rpm](https://github.com/Wojusensei/GitSync/releases/download/v0.3.4/GitSync-0.3.4-1.x86_64.rpm)
+[GitSync-0.3.5-1.x86_64.rpm](https://github.com/Wojusensei/GitSync/releases/download/v0.3.5/GitSync-0.3.5-1.x86_64.rpm)
 
 ### Linux (通用 tar.gz)
 
-[GitSync-0.3.4-linux-x86_64.tar.gz.zip](https://github.com/Wojusensei/GitSync/releases/download/v0.3.4/GitSync-0.3.4-linux-x86_64.tar.gz.zip)
+[GitSync-0.3.5-linux-x86_64.tar.gz](https://github.com/Wojusensei/GitSync/releases/download/v0.3.5/GitSync-0.3.5-linux-x86_64.tar.gz)
 
 ### Arch Linux
 
-[gitsync-0.3.4-1-x86_64.pkg.tar.zst](https://github.com/Wojusensei/GitSync/releases/download/v0.3.4/gitsync-0.3.4-1-x86_64.pkg.tar.zst)
+[gitsync-0.3.5-1-x86_64.pkg.tar.zst](https://github.com/Wojusensei/GitSync/releases/download/v0.3.5/gitsync-0.3.5-1-x86_64.pkg.tar.zst)
 
 ## 😋 安装
 
@@ -107,25 +107,25 @@
 ### Linux (Debian / Ubuntu)
 
 ```bash
-sudo dpkg -i GitSync_0.3.4_amd64.deb
+sudo dpkg -i GitSync_0.3.5_amd64.deb
 ```
 
 ## Linux (Fedora / RHEL)
 
 ```bash
-sudo rpm -ivh GitSync-0.3.4-1.x86_64.rpm
+sudo rpm -ivh GitSync-0.3.5-1.x86_64.rpm
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -U gitsync-0.3.4-1-x86_64.pkg.tar.zst
+sudo pacman -U gitsync-0.3.5-1-x86_64.pkg.tar.zst
 ```
 
 ## Linux 通用 tar.gz
 
 ```bash
-tar -xzvf GitSync-0.3.4-linux-x86_64.tar.gz
+tar -xzvf GitSync-0.3.5-linux-x86_64.tar.gz
 ./GitSync
 ```
 
