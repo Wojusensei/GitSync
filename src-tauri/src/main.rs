@@ -2160,7 +2160,7 @@ fn git_query_impl(
 
     let sql = rewrite_contains(sql);
 
-    let conn = rusqlite::Connection::open_in_memory()
+    let mut conn = rusqlite::Connection::open_in_memory()
         .map_err(|e| format!("无法创建查询引擎: {}", e))?;
     conn.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
@@ -2223,7 +2223,7 @@ fn git_query_impl(
         .map_err(|e| format!("无法设置查询超时: {}", e))?;
 
     let mut stmt = conn.prepare(&sql).map_err(|e| format_sql_error(&e, timeout))?;
-    let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let columns: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
     let mut rows_iter = stmt.query(rusqlite::params![]).map_err(|e| format_sql_error(&e, timeout))?;
     let mut result_rows: Vec<Vec<String>> = Vec::new();
     let mut truncated = false;
