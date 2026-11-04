@@ -161,7 +161,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .branch-item:hover{background:var(--panel-strong);color:var(--text);transform:translateX(2px)}
 .branch-item.active,
 .branch-item.panel-open{background:var(--btn-primary-bg);color:var(--on-accent);border:1px solid var(--btn-primary-border)}
-.branch-dot{width:8px;height:8px;border-radius:50%}
+.branch-dot{width:8px;height:8px;min-width:8px;flex-shrink:0;border-radius:50%}
 .separator{height:1px;background:var(--border);margin:16px 0}
 
 /* 主内容区 - 超薄玻璃背景 */

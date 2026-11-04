@@ -655,7 +655,7 @@ function App() {
           {branches.length > 0 ? (showAllBranches ? branches : branches.slice(0, 8)).map(b => (
             <div key={b.name} className={`branch-item ${b.name === activeBranch ? 'active' : ''}`} onClick={() => switchBranch(b.name)}>
               <span className="branch-dot" style={{ background: b.name === activeBranch ? 'var(--accent)' : 'var(--text-faint)' }} />
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</span>
+              <span title={b.name} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
               <span className="branch-sync">
                 {(b.ahead ?? 0) > 0 && <span className="branch-ahead" title={`比 ${b.upstream} 多 ${b.ahead} 个提交`}>↑{b.ahead}</span>}
                 {(b.behind ?? 0) > 0 && <span className="branch-behind" title={`比 ${b.upstream} 少 ${b.behind} 个提交`}>↓{b.behind}</span>}
