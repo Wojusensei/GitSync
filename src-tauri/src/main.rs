@@ -53,6 +53,9 @@ struct Commit {
 struct Branch {
     name: String,
     is_head: bool,
+    upstream: Option<String>,
+    ahead: Option<usize>,
+    behind: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -172,19 +175,139 @@ fn get_branches(path: String) -> Result<Vec<Branch>, String> {
 
     let mut result = Vec::new();
     for branch in branches {
-        let (branch, _) = branch.map_err(|e| format!("分支错误: {}", e))?;
+        let (branch, branch_type) = branch.map_err(|e| format!("分支错误: {}", e))?;
         let opt_name = branch.name().map_err(|e| format!("分支名错误: {}", e))?;
         let name = opt_name.unwrap_or("未知").to_string();
         if name == "HEAD" || name.ends_with("/HEAD") {
             continue;
         }
         let is_head = head_name.as_deref() == Some(&name);
-        result.push(Branch { name, is_head });
+
+        // 领先/落后只对本地分支有意义，没有上游时留空
+        let mut upstream = None;
+        let mut ahead = None;
+        let mut behind = None;
+        if branch_type == git2::BranchType::Local {
+            if let Ok(up) = branch.upstream() {
+                if let (Some(local_oid), Some(up_oid)) = (branch.get().target(), up.get().target()) {
+                    if let Ok((a, b)) = repo.graph_ahead_behind(local_oid, up_oid) {
+                        upstream = up.name().ok().flatten().map(|s| s.to_string());
+                        ahead = Some(a);
+                        behind = Some(b);
+                    }
+                }
+            }
+        }
+
+        result.push(Branch { name, is_head, upstream, ahead, behind });
     }
 
     result.sort_by(|a, b| b.is_head.cmp(&a.is_head));
 
     Ok(result)
+}
+
+#[derive(Serialize)]
+struct ReflogEntry {
+    index: usize,
+    hash: String,
+    short_hash: String,
+    action: String,
+    detail: String,
+    committer: String,
+    time: String,
+    is_current: bool,
+}
+
+#[tauri::command]
+fn get_reflog(path: String) -> Result<Vec<ReflogEntry>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let reflog = repo
+        .reflog("HEAD")
+        .map_err(|e| format!("无法读取 reflog: {}", e))?;
+    let head_oid = repo.head().ok().and_then(|h| h.target());
+    let mut current_marked = false;
+    let mut result = Vec::with_capacity(reflog.len());
+    for entry in reflog.iter() {
+        let oid = entry.id_new();
+        let message = entry.message().ok().flatten().unwrap_or("").to_string();
+        // reflog 消息形如 "checkout: moving from main to feat/x"，拆成动作和详情
+        let (action, detail) = match message.split_once(": ") {
+            Some((a, d)) => (a.to_string(), d.to_string()),
+            None => ("update".to_string(), message),
+        };
+        // HEAD 当前指向的提交只标第一条，避免历史里同 hash 全都高亮
+        let is_current = !current_marked && head_oid == Some(oid);
+        if is_current {
+            current_marked = true;
+        }
+        let sig = entry.committer();
+        result.push(ReflogEntry {
+            index: result.len(),
+            hash: oid.to_string(),
+            short_hash: oid.to_string()[..8].to_string(),
+            action,
+            detail,
+            committer: sig.name().unwrap_or("未知").to_string(),
+            time: format_local_time(sig.when().seconds()),
+            is_current,
+        });
+    }
+    Ok(result)
+}
+
+// 在指定 reflog 提交上新建分支：只改 refs，不动工作区，不会丢任何东西
+#[tauri::command]
+fn restore_reflog_branch(path: String, commit_hash: String, branch_name: String) -> Result<(), String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let oid = Oid::from_str(&commit_hash).map_err(|e| format!("无效的哈希: {}", e))?;
+    let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+    let name = branch_name.trim();
+    if name.is_empty() {
+        return Err("分支名不能为空".into());
+    }
+    if repo.find_branch(name, git2::BranchType::Local).is_ok() {
+        return Err(format!("分支 {} 已存在", name));
+    }
+    repo.branch(name, &commit, false)
+        .map_err(|e| format!("创建分支失败: {}", e))?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct CommitSignatureInfo {
+    signed: bool,
+    kind: Option<String>,
+}
+
+// 只判断提交是否带签名及签名类型；密码学校验需要外部 gpg/ssh-keygen，暂不做
+#[tauri::command]
+fn get_commit_signature(path: String, commit_hash: String) -> Result<CommitSignatureInfo, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let oid = Oid::from_str(&commit_hash).map_err(|e| format!("无效的哈希: {}", e))?;
+    match repo.extract_signature(&oid, None) {
+        Ok((signature, _)) => {
+            let text = String::from_utf8_lossy(signature.as_ref());
+            let kind = if text.contains("BEGIN SSH SIGNATURE") {
+                "SSH"
+            } else if text.contains("BEGIN PGP SIGNATURE") {
+                "PGP"
+            } else {
+                "未知"
+            };
+            Ok(CommitSignatureInfo { signed: true, kind: Some(kind.to_string()) })
+        }
+        Err(e) if e.code() == git2::ErrorCode::NotFound => {
+            Ok(CommitSignatureInfo { signed: false, kind: None })
+        }
+        Err(e) => Err(format!("读取签名失败: {}", e)),
+    }
 }
 
 fn resolve_switch_target(repo: &Repository, branch_name: &str) -> (String, bool) {
@@ -494,68 +617,74 @@ async fn get_file_timeline(path: String, file_path: String) -> Result<Vec<FileTi
 
 fn get_file_timeline_impl(repo: &Repository, file_path: &str) -> Result<Vec<FileTimelineEntry>, String> {
     let revwalk = sorted_revwalk(repo)?;
-
     let mut entries = Vec::new();
+    // 从最新版本的文件路径往回追，遇到重命名就切到旧路径继续
+    let mut current_path = file_path.to_string();
 
     for oid in revwalk {
         let oid = oid.map_err(|e| format!("遍历失败: {}", e))?;
         let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
         let tree = commit.tree().map_err(|e| format!("无法获取树: {}", e))?;
-
         let parent_tree = commit.parents().next().and_then(|p| p.tree().ok());
 
-        let diff = repo
+        let mut diff = repo
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
             .map_err(|e| format!("无法生成 Diff: {}", e))?;
+        // 开启重命名检测，改名前的历史才接得上
+        let mut find_opts = git2::DiffFindOptions::new();
+        find_opts.renames(true).copies(false).rename_threshold(50);
+        diff.find_similar(Some(&mut find_opts))
+            .map_err(|e| format!("重命名检测失败: {}", e))?;
 
-        let mut file_changed = false;
-        let mut diff_text = String::new();
-
+        let mut matched: Option<(usize, Option<String>)> = None;
         let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
         for (idx, delta) in deltas.iter().enumerate() {
-            // 删除的文件 new_file 路径为 None，回退到 old_file
-            let delta_path = delta
-                .new_file()
-                .path()
-                .or_else(|| delta.old_file().path())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            if delta_path == file_path {
-                file_changed = true;
-                let patch = git2::Patch::from_diff(&diff, idx)
-                    .map_err(|e| format!("Patch 创建失败: {}", e))?;
-                if let Some(mut p) = patch {
-                    let mut diff_content = Vec::new();
-                    // 带 origin 前缀，与 get_commit_detail 一致
-                    p.print(&mut |_delta, _hunk, line| {
-                        diff_content.push(line.origin() as u8);
-                        diff_content.extend_from_slice(line.content());
-                        true
-                    })
-                    .map_err(|e| format!("Diff 打印失败: {}", e))?;
-                    diff_text = String::from_utf8_lossy(&diff_content).to_string();
-                }
+            let new_path = delta.new_file().path().map(|p| p.to_string_lossy().to_string());
+            let old_path = delta.old_file().path().map(|p| p.to_string_lossy().to_string());
+            let hit = if delta.status() == git2::Delta::Renamed {
+                new_path.as_deref() == Some(current_path.as_str())
+            } else {
+                new_path.as_deref() == Some(current_path.as_str())
+                    || old_path.as_deref() == Some(current_path.as_str())
+            };
+            if hit {
+                matched = Some((idx, old_path));
                 break;
             }
         }
 
-        if file_changed {
-            let author_name = commit.author().name().unwrap_or("未知").to_string();
-            let message = commit.message().unwrap_or("").to_string();
-            let timestamp = format_local_time(commit.time().seconds());
+        let Some((idx, old_path)) = matched else { continue };
 
-            entries.push(FileTimelineEntry {
-                commit_hash: oid.to_string(),
-                author: author_name,
-                time: timestamp,
-                message,
-                diff: diff_text,
-            });
+        let mut diff_text = String::new();
+        if let Ok(Some(mut patch)) = git2::Patch::from_diff(&diff, idx) {
+            let mut diff_content = Vec::new();
+            patch
+                .print(&mut |_delta, _hunk, line| {
+                    diff_content.push(line.origin() as u8);
+                    diff_content.extend_from_slice(line.content());
+                    true
+                })
+                .map_err(|e| format!("Diff 打印失败: {}", e))?;
+            diff_text = String::from_utf8_lossy(&diff_content).to_string();
+        }
 
-            if entries.len() >= 50 {
-                break;
+        // 这一提交改了名：更早的历史要用旧路径去找
+        if deltas[idx].status() == git2::Delta::Renamed {
+            if let Some(old) = old_path {
+                current_path = old;
             }
+        }
+
+        entries.push(FileTimelineEntry {
+            commit_hash: oid.to_string(),
+            author: commit.author().name().unwrap_or("未知").to_string(),
+            time: format_local_time(commit.time().seconds()),
+            message: commit.message().unwrap_or("").to_string(),
+            diff: diff_text,
+        });
+
+        if entries.len() >= 50 {
+            break;
         }
     }
 
@@ -990,6 +1119,58 @@ fn stash_list(path: String) -> Result<Vec<StashEntry>, String> {
     Ok(entries)
 }
 
+#[derive(Serialize)]
+struct StashFileDiff {
+    path: String,
+    status: String,
+    diff: String,
+}
+
+// 预览 stash 内容：stash 提交相对其父提交的改动
+#[tauri::command]
+fn stash_preview(path: String, index: usize) -> Result<Vec<StashFileDiff>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let obj = repo
+        .revparse_single(&format!("stash@{{{}}}", index))
+        .map_err(|e| format!("找不到 stash@{{{}}}: {}", index, e))?;
+    let commit = obj
+        .peel_to_commit()
+        .map_err(|e| format!("stash 不是提交: {}", e))?;
+    let tree = commit.tree().map_err(|e| format!("无法获取 stash 树: {}", e))?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+        .map_err(|e| format!("无法生成 stash diff: {}", e))?;
+
+    let deltas: Vec<git2::DiffDelta<'_>> = diff.deltas().collect();
+    let mut files = Vec::new();
+    for (idx, delta) in deltas.iter().enumerate() {
+        let status = match delta.status() {
+            git2::Delta::Added => "A",
+            git2::Delta::Deleted => "D",
+            git2::Delta::Modified => "M",
+            git2::Delta::Renamed => "R",
+            _ => "?",
+        };
+        let file_path = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "未知文件".into());
+        let mut text = String::new();
+        if let Ok(Some(mut patch)) = git2::Patch::from_diff(&diff, idx) {
+            if let Ok(buf) = patch.to_buf() {
+                text = String::from_utf8_lossy(&buf).to_string();
+            }
+        }
+        files.push(StashFileDiff { path: file_path, status: status.to_string(), diff: text });
+    }
+    Ok(files)
+}
+
 #[tauri::command]
 fn stash_pop(path: String, index: usize) -> Result<(), String> {
     let expanded = shellexpand::tilde(&path).to_string();
@@ -1345,11 +1526,15 @@ async fn compare_commits(path: String, commit_a: String, commit_b: String) -> Re
     let repo = Repository::open(Path::new(&expanded))
         .map_err(|e| format!("无法打开仓库: {}", e))?;
 
-    let oid_a = Oid::from_str(&commit_a).map_err(|e| format!("无效的哈希 A: {}", e))?;
-    let oid_b = Oid::from_str(&commit_b).map_err(|e| format!("无效的哈希 B: {}", e))?;
-
-    let commit_a = repo.find_commit(oid_a).map_err(|e| format!("找不到提交 A: {}", e))?;
-    let commit_b = repo.find_commit(oid_b).map_err(|e| format!("找不到提交 B: {}", e))?;
+    // 支持完整/缩写哈希，也支持分支、标签、HEAD、stash@{n} 等任意 rev
+    let resolve = |rev: &str, label: &str| -> Result<git2::Commit<'_>, String> {
+        repo.revparse_single(rev)
+            .map_err(|e| format!("无法解析{} {}: {}", label, rev, e))?
+            .peel_to_commit()
+            .map_err(|e| format!("{} {} 不是提交: {}", label, rev, e))
+    };
+    let commit_a = resolve(&commit_a, "提交 A")?;
+    let commit_b = resolve(&commit_b, "提交 B")?;
 
     let tree_a = commit_a.tree().map_err(|e| format!("无法获取树 A: {}", e))?;
     let tree_b = commit_b.tree().map_err(|e| format!("无法获取树 B: {}", e))?;
@@ -1360,6 +1545,11 @@ async fn compare_commits(path: String, commit_a: String, commit_b: String) -> Re
 
     let mut diff_text = String::new();
     diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        // content() 不带行首符号，手动补上 + - 空格，前端才能按行着色
+        match line.origin() {
+            '+' | '-' | ' ' => diff_text.push(line.origin()),
+            _ => {}
+        }
         diff_text.push_str(std::str::from_utf8(line.content()).unwrap_or(""));
         true
     }).map_err(|e| format!("Diff 打印失败: {}", e))?;
@@ -1368,6 +1558,66 @@ async fn compare_commits(path: String, commit_a: String, commit_b: String) -> Re
         commit_a: commit_a.id().to_string(),
         commit_b: commit_b.id().to_string(),
         diff: diff_text,
+    })
+}
+
+#[derive(Serialize)]
+struct ImageDiff {
+    old_mime: Option<String>,
+    old_b64: Option<String>,
+    new_mime: Option<String>,
+    new_b64: Option<String>,
+}
+
+fn image_mime(name: &str, data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return Some("image/png");
+    }
+    if data.starts_with(&[0xFF, 0xD8]) {
+        return Some("image/jpeg");
+    }
+    if data.starts_with(b"GIF8") {
+        return Some("image/gif");
+    }
+    if data.len() > 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if data.starts_with(b"BM") {
+        return Some("image/bmp");
+    }
+    if name.to_ascii_lowercase().ends_with(".svg") {
+        return Some("image/svg+xml");
+    }
+    None
+}
+
+fn blob_b64(repo: &Repository, tree: Option<&git2::Tree<'_>>, file_path: &str) -> Option<(String, String)> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let tree = tree?;
+    let entry = tree.get_path(Path::new(file_path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    let data = blob.content();
+    let mime = image_mime(file_path, data)?;
+    Some((mime.to_string(), STANDARD.encode(data)))
+}
+
+// 图片改动取新旧两版原始字节，前端做左右对照
+#[tauri::command]
+fn get_image_diff(path: String, commit_hash: String, file_path: String) -> Result<ImageDiff, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let oid = Oid::from_str(&commit_hash).map_err(|e| format!("无效的哈希: {}", e))?;
+    let commit = repo.find_commit(oid).map_err(|e| format!("找不到提交: {}", e))?;
+    let new_tree = commit.tree().ok();
+    let old_tree = commit.parents().next().and_then(|p| p.tree().ok());
+    let new_side = blob_b64(&repo, new_tree.as_ref(), &file_path);
+    let old_side = blob_b64(&repo, old_tree.as_ref(), &file_path);
+    Ok(ImageDiff {
+        old_mime: old_side.as_ref().map(|(m, _)| m.clone()),
+        old_b64: old_side.map(|(_, b)| b),
+        new_mime: new_side.as_ref().map(|(m, _)| m.clone()),
+        new_b64: new_side.map(|(_, b)| b),
     })
 }
 
@@ -2612,8 +2862,15 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_commits,
             get_branches,
+            get_reflog,
+            restore_reflog_branch,
             checkout_branch,
             get_commit_detail,
+            get_commit_signature,
+            get_line_history,
+            get_submodules,
+            update_submodules,
+            get_worktrees,
             search_commits,
             get_blame,
             get_file_timeline,
@@ -2622,12 +2879,14 @@ fn main() {
             get_hot_files,
             stash_save,
             stash_list,
+            stash_preview,
             stash_pop,
             stash_drop,
             get_rebase_commits,
             execute_rebase,
             semantic_search,
             compare_commits,
+            get_image_diff,
             generate_changelog,
             get_graph_commits,
             get_file_tree,
@@ -3598,5 +3857,576 @@ mod backend_fix_tests {
         );
         // 上下文行不带行内标记
         assert!(lines.iter().filter(|l| l.origin == " ").all(|l| l.inline_changes.is_empty()));
+    }
+}
+
+#[cfg(test)]
+mod reflog_tests {
+    use super::*;
+
+    fn empty_tree(repo: &Repository) -> (Oid, git2::Tree<'_>) {
+        let mut tb = repo.treebuilder(None).unwrap();
+        let oid = tb.write().unwrap();
+        (oid, repo.find_tree(oid).unwrap())
+    }
+
+    #[test]
+    fn reflog_lists_entries_and_restores_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+        let (_, tree) = empty_tree(&repo);
+
+        let first = repo
+            .commit(Some("refs/heads/main"), &sig, &sig, "first", &tree, &[])
+            .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        let first_commit = repo.find_commit(first).unwrap();
+        let second = repo
+            .commit(Some("HEAD"), &sig, &sig, "second", &tree, &[&first_commit])
+            .unwrap();
+
+        // 建一个分支再删掉，模拟「丢提交」
+        {
+            let commit = repo.find_commit(second).unwrap();
+            repo.branch("lost", &commit, false).unwrap();
+            repo.find_branch("lost", git2::BranchType::Local)
+                .unwrap()
+                .delete()
+                .unwrap();
+        }
+
+        let path = dir.path().to_string_lossy().to_string();
+        let log = get_reflog(path.clone()).unwrap();
+        assert!(!log.is_empty(), "reflog 不应为空");
+        assert!(
+            log.iter().any(|e| e.hash == second.to_string()),
+            "reflog 里应能找到第二条提交: {:?}",
+            log.iter().map(|e| &e.hash).collect::<Vec<_>>()
+        );
+        assert!(log.iter().filter(|e| e.is_current).count() <= 1);
+        assert!(log.iter().any(|e| e.action == "commit"));
+
+        restore_reflog_branch(path.clone(), second.to_string(), "recover/second".into()).unwrap();
+        assert!(repo.find_branch("recover/second", git2::BranchType::Local).is_ok());
+        // 同名分支不能重复建
+        assert!(restore_reflog_branch(path.clone(), second.to_string(), "recover/second".into()).is_err());
+        // 非法哈希报错
+        assert!(restore_reflog_branch(path, "not-a-hash".into(), "recover/bad".into()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod compare_ref_tests {
+    use super::*;
+
+    fn commit_file(repo: &Repository, file: &str, content: &str, msg: &str, parent: Option<Oid>, update_ref: Option<&str>, sig: &git2::Signature<'_>) -> Oid {
+        std::fs::write(repo.workdir().unwrap().join(file), content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(file)).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let parent_commit = parent.map(|p| repo.find_commit(p).unwrap());
+        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        repo.commit(update_ref, sig, sig, msg, &tree, &parents).unwrap()
+    }
+
+    #[test]
+    fn compare_resolves_branch_and_tag_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        let c1 = commit_file(&repo, "a.txt", "one\n", "first", None, Some("refs/heads/main"), &sig);
+        repo.set_head("refs/heads/main").unwrap();
+        let c2 = commit_file(&repo, "a.txt", "two\n", "second", Some(c1), Some("HEAD"), &sig);
+        let obj = repo.find_object(c1, None).unwrap();
+        repo.tag_lightweight("v-test", &obj, false).unwrap();
+
+        let diff = tauri::async_runtime::block_on(compare_commits(path.clone(), "v-test".into(), "main".into())).unwrap();
+        assert!(diff.diff.contains("+two"), "diff 应包含新内容: {}", diff.diff);
+        assert!(tauri::async_runtime::block_on(compare_commits(path.clone(), "nope".into(), "main".into())).is_err());
+        assert!(tauri::async_runtime::block_on(compare_commits(path, c1.to_string(), "HEAD".into())).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod image_diff_tests {
+    use super::*;
+
+    fn write_commit(repo: &Repository, file: &str, bytes: &[u8], msg: &str, parent: Option<Oid>, update_ref: &str, sig: &git2::Signature<'_>) -> Oid {
+        std::fs::write(repo.workdir().unwrap().join(file), bytes).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(file)).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let parent_commit = parent.map(|p| repo.find_commit(p).unwrap());
+        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        repo.commit(Some(update_ref), sig, sig, msg, &tree, &parents).unwrap()
+    }
+
+    #[test]
+    fn image_diff_returns_both_versions_and_mime() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+        let png1: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+        let png2: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 4, 5, 6];
+
+        let c1 = write_commit(&repo, "img.png", png1, "first", None, "refs/heads/main", &sig);
+        repo.set_head("refs/heads/main").unwrap();
+        let c2 = write_commit(&repo, "img.png", png2, "second", Some(c1), "HEAD", &sig);
+
+        let diff = get_image_diff(path.clone(), c2.to_string(), "img.png".into()).unwrap();
+        assert_eq!(diff.old_mime.as_deref(), Some("image/png"));
+        assert_eq!(diff.new_mime.as_deref(), Some("image/png"));
+        assert!(diff.old_b64.is_some() && diff.new_b64.is_some());
+        assert_ne!(diff.old_b64, diff.new_b64);
+
+        // 非图片文件不返回数据
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let parent = repo.find_commit(c2).unwrap();
+        let c3 = repo.commit(Some("HEAD"), &sig, &sig, "text", &tree, &[&parent]).unwrap();
+        let text_diff = get_image_diff(path, c3.to_string(), "a.txt".into()).unwrap();
+        assert!(text_diff.old_b64.is_none() && text_diff.new_b64.is_none());
+    }
+}
+
+#[cfg(test)]
+mod stash_preview_tests {
+    use super::*;
+
+    #[test]
+    fn stash_preview_returns_file_diffs() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        repo.commit(Some("refs/heads/main"), &sig, &sig, "first", &tree, &[]).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        drop(index);
+
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        let mut repo2 = Repository::open(dir.path()).unwrap();
+        repo2.stash_save(&sig, "wip", None).unwrap();
+
+        let files = stash_preview(path, 0).unwrap();
+        assert_eq!(files.len(), 1, "应有一个文件: {:?}", files.iter().map(|f| &f.path).collect::<Vec<_>>());
+        assert_eq!(files[0].path, "a.txt");
+        assert!(files[0].diff.contains("+two"), "diff 应包含新内容: {}", files[0].diff);
+        assert!(stash_preview(dir.path().to_string_lossy().to_string(), 9).is_err());
+    }
+}
+
+#[cfg(test)]
+mod branch_sync_tests {
+    use super::*;
+
+    #[test]
+    fn branches_report_ahead_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let c1 = repo.commit(Some("refs/heads/main"), &sig, &sig, "first", &tree, &[]).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        // feat 分支停在第一个提交，落后 main 一个
+        {
+            let commit = repo.find_commit(c1).unwrap();
+            repo.branch("feat", &commit, false).unwrap();
+        }
+
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a.txt")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let first = repo.find_commit(c1).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "second", &tree, &[&first]).unwrap();
+
+        {
+            let mut feat = repo.find_branch("feat", git2::BranchType::Local).unwrap();
+            feat.set_upstream(Some("main")).unwrap();
+        }
+
+        let branches = get_branches(dir.path().to_string_lossy().to_string()).unwrap();
+        let feat = branches.iter().find(|b| b.name == "feat").expect("feat 分支应存在");
+        assert_eq!(feat.upstream.as_deref(), Some("main"));
+        assert_eq!(feat.behind, Some(1));
+        assert_eq!(feat.ahead, Some(0));
+        let main = branches.iter().find(|b| b.name == "main").unwrap();
+        assert!(main.upstream.is_none(), "没有上游时不应显示同步状态");
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+
+    #[test]
+    fn signature_detection_reports_unsigned_and_pgp() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+
+        let mut tb = repo.treebuilder(None).unwrap();
+        let tree_oid = tb.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let plain = repo
+            .commit(Some("refs/heads/main"), &sig, &sig, "plain", &tree, &[])
+            .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        let unsigned = get_commit_signature(path.clone(), plain.to_string()).unwrap();
+        assert!(!unsigned.signed);
+        assert!(unsigned.kind.is_none());
+
+        // 手工写入一个带 gpgsig 头的提交对象
+        let content = format!(
+            "tree {}\nauthor tester <t@example.com> 1700000000 +0000\ncommitter tester <t@example.com> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n ZmFrZQ==\n -----END PGP SIGNATURE-----\n\nsigned commit\n",
+            tree_oid
+        );
+        let odb = repo.odb().unwrap();
+        let signed_oid = odb.write(git2::ObjectType::Commit, content.as_bytes()).unwrap();
+        repo.reference("refs/heads/signed", signed_oid, false, "test").unwrap();
+
+        let signed = get_commit_signature(path, signed_oid.to_string()).unwrap();
+        assert!(signed.signed);
+        assert_eq!(signed.kind.as_deref(), Some("PGP"));
+    }
+}
+
+#[cfg(test)]
+mod timeline_rename_tests {
+    use super::*;
+
+    fn commit_files(repo: &Repository, files: &[(&str, &str)], msg: &str, parent: Option<Oid>, sig: &git2::Signature<'_>) -> Oid {
+        for (p, c) in files {
+            std::fs::write(repo.workdir().unwrap().join(p), c).unwrap();
+        }
+        // 重建索引，避免重命名场景里旧路径残留
+        let mut index = repo.index().unwrap();
+        index.clear().unwrap();
+        for (p, _) in files {
+            index.add_path(std::path::Path::new(p)).unwrap();
+        }
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let parent_commit = parent.map(|p| repo.find_commit(p).unwrap());
+        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        repo.commit(Some("HEAD"), sig, sig, msg, &tree, &parents).unwrap()
+    }
+
+    #[test]
+    fn timeline_follows_renames() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+        // 先建一个初始提交让 HEAD 存在
+        std::fs::write(dir.path().join("seed.txt"), "seed\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("seed.txt")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let c0 = repo.commit(Some("refs/heads/main"), &sig, &sig, "seed", &tree, &[]).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        drop(index);
+
+        let c1 = commit_files(&repo, &[("old.txt", "shared content line\n")], "add old", Some(c0), &sig);
+        // 重命名 old.txt -> new.txt
+        std::fs::remove_file(dir.path().join("old.txt")).unwrap();
+        let c2 = commit_files(&repo, &[("new.txt", "shared content line\n")], "rename", Some(c1), &sig);
+        let c3 = commit_files(&repo, &[("new.txt", "shared content line changed\n")], "modify new", Some(c2), &sig);
+
+        let timeline = get_file_timeline_impl(&repo, "new.txt").unwrap();
+        let messages: Vec<&str> = timeline.iter().map(|e| e.message.trim()).collect();
+        assert!(messages.contains(&"modify new"));
+        assert!(messages.contains(&"rename"));
+        assert!(messages.contains(&"add old"), "重命名前的历史应通过旧路径找到: {:?}", messages);
+        assert_eq!(timeline[0].commit_hash, c3.to_string());
+    }
+}
+
+#[derive(Serialize)]
+struct LineHistoryEntry {
+    commit_hash: String,
+    short_hash: String,
+    author: String,
+    time: String,
+    message: String,
+    lines: Vec<usize>,
+    sample: String,
+}
+
+// 行级历史 v1：对选中行做 blame 聚合，返回每行最后修改它的提交
+#[tauri::command]
+fn get_line_history(path: String, commit_hash: String, file_path: String, start_line: usize, end_line: usize) -> Result<Vec<LineHistoryEntry>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let commit = repo
+        .revparse_single(&commit_hash)
+        .map_err(|e| format!("无法解析提交: {}", e))?
+        .peel_to_commit()
+        .map_err(|e| format!("不是提交: {}", e))?;
+
+    let mut opts = git2::BlameOptions::new();
+    opts.newest_commit(commit.id());
+    let blame = repo
+        .blame_file(Path::new(&file_path), Some(&mut opts))
+        .map_err(|e| format!("无法生成 blame: {}", e))?;
+
+    let start = start_line.max(1);
+    let end = end_line.max(start);
+    let content = commit
+        .tree()
+        .ok()
+        .and_then(|t| t.get_path(Path::new(&file_path)).ok())
+        .and_then(|e| repo.find_blob(e.id()).ok())
+        .map(|b| String::from_utf8_lossy(b.content()).to_string())
+        .unwrap_or_default();
+    let file_lines: Vec<&str> = content.split('\n').collect();
+
+    let mut map: std::collections::BTreeMap<Oid, LineHistoryEntry> = std::collections::BTreeMap::new();
+    for hunk in blame.iter() {
+        let first = hunk.final_start_line();
+        let count = hunk.lines_in_hunk();
+        for offset in 0..count {
+            let line_no = first + offset;
+            if line_no < start || line_no > end {
+                continue;
+            }
+            let oid = hunk.final_commit_id();
+            let entry = map.entry(oid).or_insert_with(|| {
+                let c = repo.find_commit(oid).ok();
+                LineHistoryEntry {
+                    commit_hash: oid.to_string(),
+                    short_hash: oid.to_string()[..8].to_string(),
+                    author: c.as_ref().and_then(|c| c.author().name().ok().map(|s| s.to_string())).unwrap_or_else(|| "未知".into()),
+                    time: c.as_ref().map(|c| format_local_time(c.time().seconds())).unwrap_or_default(),
+                    message: c.as_ref().map(|c| c.message().unwrap_or("").to_string()).unwrap_or_default(),
+                    lines: Vec::new(),
+                    sample: String::new(),
+                }
+            });
+            entry.lines.push(line_no);
+            if entry.sample.is_empty() {
+                entry.sample = file_lines.get(line_no.saturating_sub(1)).unwrap_or(&"").to_string();
+            }
+        }
+    }
+
+    let mut result: Vec<LineHistoryEntry> = map.into_values().collect();
+    result.sort_by_key(|e| e.lines.first().copied().unwrap_or(0));
+    Ok(result)
+}
+
+#[cfg(test)]
+mod line_history_tests {
+    use super::*;
+
+    fn commit_file(repo: &Repository, content: &str, msg: &str, parent: Option<Oid>, sig: &git2::Signature<'_>) -> Oid {
+        std::fs::write(repo.workdir().unwrap().join("f.txt"), content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.clear().unwrap();
+        index.add_path(std::path::Path::new("f.txt")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let parent_commit = parent.map(|p| repo.find_commit(p).unwrap());
+        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        repo.commit(Some("HEAD"), sig, sig, msg, &tree, &parents).unwrap()
+    }
+
+    #[test]
+    fn line_history_groups_lines_by_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+
+        let c1 = commit_file(&repo, "a\nb\nc\n", "first", None, &sig);
+        if repo.head().is_err() {
+            repo.set_head("refs/heads/main").unwrap();
+        }
+        let c1 = if repo.find_reference("refs/heads/main").is_err() {
+            repo.reference("refs/heads/main", c1, true, "init").unwrap();
+            c1
+        } else { c1 };
+        repo.set_head("refs/heads/main").unwrap();
+        commit_file(&repo, "a\nB\nc\n", "second", Some(c1), &sig);
+
+        let entries = get_line_history(
+            dir.path().to_string_lossy().to_string(),
+            "HEAD".into(),
+            "f.txt".into(),
+            1,
+            3,
+        ).unwrap();
+        assert_eq!(entries.len(), 2, "应有两条提交记录: {:?}", entries.iter().map(|e| &e.message).collect::<Vec<_>>());
+        let total: usize = entries.iter().map(|e| e.lines.len()).sum();
+        assert_eq!(total, 3, "三行都应被覆盖");
+        assert!(entries.iter().any(|e| e.message.trim() == "second" && e.sample == "B"));
+        assert!(entries.iter().any(|e| e.message.trim() == "first" && e.lines.len() == 2));
+    }
+}
+
+#[derive(Serialize)]
+struct SubmoduleInfo {
+    name: String,
+    path: String,
+    url: Option<String>,
+    head_oid: Option<String>,
+    status: String,
+}
+
+#[tauri::command]
+fn get_submodules(path: String) -> Result<Vec<SubmoduleInfo>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let modules = repo
+        .submodules()
+        .map_err(|e| format!("无法读取子模块: {}", e))?;
+    Ok(modules
+        .into_iter()
+        .map(|sm| {
+            // git2 0.21 没有 Submodule::status，用工作区/索引状态近似判断
+            let status = if sm.workdir_id().is_none() {
+                "未初始化"
+            } else {
+                match repo.status_file(sm.path()) {
+                    Ok(s) if s.intersects(
+                        git2::Status::WT_MODIFIED
+                            | git2::Status::INDEX_MODIFIED
+                            | git2::Status::WT_DELETED
+                            | git2::Status::INDEX_DELETED
+                            | git2::Status::WT_NEW
+                            | git2::Status::INDEX_NEW
+                            | git2::Status::WT_RENAMED
+                            | git2::Status::INDEX_RENAMED,
+                    ) => "有本地改动",
+                    _ => "正常",
+                }
+            };
+            SubmoduleInfo {
+                name: sm.name().unwrap_or("未知").to_string(),
+                path: sm.path().to_string_lossy().to_string(),
+                url: sm.url().ok().flatten().map(|u| u.to_string()),
+                head_oid: sm.head_id().map(|o| o.to_string()),
+                status: status.to_string(),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn update_submodules(path: String) -> Result<(), String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let modules = repo
+        .submodules()
+        .map_err(|e| format!("无法读取子模块: {}", e))?;
+    for mut sm in modules {
+        sm.update(true, None)
+            .map_err(|e| format!("更新子模块 {} 失败: {}", sm.name().unwrap_or("?"), e))?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct WorktreeInfo {
+    name: String,
+    path: String,
+    branch: Option<String>,
+    head: Option<String>,
+}
+
+#[tauri::command]
+fn get_worktrees(path: String) -> Result<Vec<WorktreeInfo>, String> {
+    let expanded = shellexpand::tilde(&path).to_string();
+    let repo = Repository::open(Path::new(&expanded))
+        .map_err(|e| format!("无法打开仓库: {}", e))?;
+    let names = repo
+        .worktrees()
+        .map_err(|e| format!("无法读取 worktree 列表: {}", e))?;
+    let mut result = Vec::new();
+    for name in names.iter() {
+        let name = match name {
+            Ok(Some(name)) => name,
+            _ => continue,
+        };
+        if let Ok(wt) = repo.find_worktree(name) {
+            let (branch, head) = match Repository::open_from_worktree(&wt) {
+                Ok(wr) => {
+                    let h = wr.head().ok();
+                    (
+                        h.as_ref().and_then(|b| b.shorthand().ok().map(|s| s.to_string())),
+                        h.and_then(|b| b.target()).map(|o| o.to_string()),
+                    )
+                }
+                Err(_) => (None, None),
+            };
+            result.push(WorktreeInfo {
+                name: name.to_string(),
+                path: wt.path().to_string_lossy().to_string(),
+                branch,
+                head,
+            });
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod repo_extras_tests {
+    use super::*;
+
+    #[test]
+    fn submodules_and_worktrees_are_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("tester", "t@example.com").unwrap();
+        let mut tb = repo.treebuilder(None).unwrap();
+        let tree_oid = tb.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        repo.commit(Some("refs/heads/main"), &sig, &sig, "init", &tree, &[]).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        let dep_path = std::path::Path::new("deps/dep");
+        repo.submodule("https://example.com/dep.git", dep_path, true).unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+        let subs = get_submodules(path.clone()).unwrap();
+        assert_eq!(subs.len(), 1, "{:?}", subs.iter().map(|s| &s.path).collect::<Vec<_>>());
+        assert_eq!(subs[0].path, "deps/dep");
+        assert_eq!(subs[0].url.as_deref(), Some("https://example.com/dep.git"));
+        assert!(!subs[0].status.is_empty());
+
+        let wt_dir = tempfile::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("wt1");
+        repo.worktree("wt1", &wt_path, None).unwrap();
+        let wts = get_worktrees(path).unwrap();
+        assert_eq!(wts.len(), 1);
+        assert_eq!(wts[0].name, "wt1");
+        assert!(wts[0].path.ends_with("wt1"));
+        assert!(wts[0].head.is_some(), "worktree 应该有 HEAD");
     }
 }

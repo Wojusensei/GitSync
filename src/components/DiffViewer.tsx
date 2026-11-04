@@ -1,8 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { invokeTauri } from '../services/tauriService';
 
 const MAX_DIFF_LINES = 3000;
+
+interface RefOption {
+  group: string;
+  value: string;
+  label: string;
+}
 
 export default function DiffViewer({ repoPath }: { repoPath: string }) {
   const [commitA, setCommitA] = useState('');
@@ -10,6 +16,32 @@ export default function DiffViewer({ repoPath }: { repoPath: string }) {
   const [diff, setDiff] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [refs, setRefs] = useState<RefOption[]>([]);
+
+  // 分支 / 标签 / stash 都能直接选，选区只是替用户填输入框
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [branches, tags, stashes] = await Promise.all([
+          invokeTauri<any[]>('get_branches', { path: repoPath }),
+          invokeTauri<any[]>('get_tags', { path: repoPath }),
+          invokeTauri<any[]>('stash_list', { path: repoPath }),
+        ]);
+        const options: RefOption[] = [
+          ...branches.map(b => ({ group: '分支', value: b.name, label: `${b.name}${b.is_head ? '（HEAD）' : ''}` })),
+          ...tags.map(t => ({ group: '标签', value: t.name, label: t.name })),
+          ...stashes.map(s => ({ group: 'Stash', value: `stash@{${s.index}}`, label: `stash@{${s.index}} ${s.message}` })),
+        ];
+        if (!cancelled) setRefs(options);
+      } catch {
+        // 拉不到 ref 列表时仍可手输哈希
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [repoPath]);
+
+  const refGroups = Array.from(new Set(refs.map(r => r.group)));
 
   const handleCompare = async () => {
     setLoading(true);
@@ -57,12 +89,44 @@ export default function DiffViewer({ repoPath }: { repoPath: string }) {
       <div className="diff-compare-bar">
         <label className="filter-field">
           <span>提交 A（旧）</span>
-          <input className="filter-input" value={commitA} onChange={e => setCommitA(e.target.value)} placeholder="哈希或 ref" />
+          <div className="diff-ref-row">
+            <select
+              className="filter-input"
+              value={refs.some(r => r.value === commitA) ? commitA : ''}
+              onChange={e => e.target.value && setCommitA(e.target.value)}
+            >
+              <option value="">分支 / 标签 / Stash</option>
+              {refGroups.map(group => (
+                <optgroup key={group} label={group}>
+                  {refs.filter(r => r.group === group).map(r => (
+                    <option key={`${group}-${r.value}`} value={r.value}>{r.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <input className="filter-input" value={commitA} onChange={e => setCommitA(e.target.value)} placeholder="或输入哈希 / ref" />
+          </div>
         </label>
         <button className="diff-swap" onClick={swap} title="交换 A / B" type="button">⇄</button>
         <label className="filter-field">
           <span>提交 B（新）</span>
-          <input className="filter-input" value={commitB} onChange={e => setCommitB(e.target.value)} placeholder="哈希或 ref" />
+          <div className="diff-ref-row">
+            <select
+              className="filter-input"
+              value={refs.some(r => r.value === commitB) ? commitB : ''}
+              onChange={e => e.target.value && setCommitB(e.target.value)}
+            >
+              <option value="">分支 / 标签 / Stash</option>
+              {refGroups.map(group => (
+                <optgroup key={group} label={group}>
+                  {refs.filter(r => r.group === group).map(r => (
+                    <option key={`${group}-${r.value}`} value={r.value}>{r.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <input className="filter-input" value={commitB} onChange={e => setCommitB(e.target.value)} placeholder="或输入哈希 / ref" />
+          </div>
         </label>
         <button className="btn btn-blue" onClick={handleCompare} disabled={loading || !commitA.trim() || !commitB.trim()}>
           {loading ? '对比中…' : '对比'}
