@@ -67,7 +67,7 @@ export default function FileTree({ repoPath, onSelectFile }: { repoPath: string;
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>文件树</h3>
       <button className="btn btn-blue" onClick={loadTree}>加载文件树</button>
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}

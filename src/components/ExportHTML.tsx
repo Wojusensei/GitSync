@@ -33,7 +33,7 @@ export default function ExportHTML({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>导出报告</h3>
       <button className="btn btn-blue" onClick={exportReport} disabled={loading}>
         {loading ? '生成中...' : '生成并复制 HTML'}

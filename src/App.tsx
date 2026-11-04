@@ -17,6 +17,7 @@ import ChangelogGenerator from './components/ChangelogGenerator';
 import EnhancedRebase from './components/EnhancedRebase';
 import CommandPalette from './components/CommandPalette';
 import GraphView from './components/GraphView';
+import FileScrubber from './components/FileScrubber';
 import FileTree from './components/FileTree';
 import FileViewer from './components/FileViewer';
 import CommitFilter from './components/CommitFilter';
@@ -122,11 +123,21 @@ const useRipple = () => {
 };
 
 
+// UI 默认值一次性迁移：旧配置里存过的值会盖住新默认，清一次让新默认生效
+if (localStorage.getItem('ui_defaults_rev') !== '1') {
+  for (const key of ['bg_opacity', 'glass_blur', 'torch_size', 'panel_mode', 'theme']) {
+    localStorage.removeItem(key);
+  }
+  localStorage.setItem('ui_defaults_rev', '1');
+}
+
 function App() {
   const [repoPath, setRepoPath] = useState('');
   const [commits, setCommits] = useState<Commit[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [activeBranch, setActiveBranch] = useState<string>('');
+  // 分支多时默认只显示前几个，可展开/收起
+  const [showAllBranches, setShowAllBranches] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -218,12 +229,13 @@ function App() {
   });
 
   // UI 状态（全局生效，不会因为切换面板而重置）
-  const [bgOpacity, setBgOpacity] = useState(() => Number(localStorage.getItem('bg_opacity') || '0.9'));
+  const [bgOpacity, setBgOpacity] = useState(() => Number(localStorage.getItem('bg_opacity') || '0.5'));
   const [bgBase64, setBgBase64] = useState(() => localStorage.getItem('bg_base64') || DEFAULT_BG_BASE64);
-  // 默认手风琴；老用户显式选过叠加则尊重
+  // 默认替换；老用户显式选过叠加则尊重
   const [panelMode, setPanelMode] = useState<'stack' | 'replace'>(() => (localStorage.getItem('panel_mode') as 'stack' | 'replace') || 'replace');
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
-  const [torchSize, setTorchSize] = useState(() => Number(localStorage.getItem('torch_size') || '100'));
+  const [torchSize, setTorchSize] = useState(() => Number(localStorage.getItem('torch_size') || '165'));
+  const [glassBlur, setGlassBlur] = useState(() => Number(localStorage.getItem('glass_blur') || '10'));
 
   // 面板显隐状态
   const [showHealth, setShowHealth] = useState(false);
@@ -272,9 +284,6 @@ function App() {
     });
   };
 
-  // 自动滚动状态
-  const [scrollToPanelId, setScrollToPanelId] = useState<string | null>(null);
-
   // 数据状态
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [contributors, setContributors] = useState<Contributor[]>([]);
@@ -298,21 +307,53 @@ function App() {
     setActivePanelId(null);
   };
 
-  // 统一开关入口：手风琴模式下开新面板先关其它面板
+  // 自动定位到刚打开的面板：元素可能还没挂载（异步加载后才渲染），等它出现再滚，
+  // 展开动画结束后位置还会变，再校正一次
+  const scrollTimerRef = useRef<number | null>(null);
+  const scrollToPanel = (id: string) => {
+    if (scrollTimerRef.current !== null) {
+      window.clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = null;
+    }
+    const domId = `panel-${id}`;
+    const startedAt = performance.now();
+    const attempt = () => {
+      const el = document.getElementById(domId);
+      if (!el) {
+        if (performance.now() - startedAt < 4000) {
+          scrollTimerRef.current = window.setTimeout(attempt, 60);
+        }
+        return;
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrollTimerRef.current = window.setTimeout(() => {
+        const again = document.getElementById(domId);
+        const main = mainRef.current;
+        if (!again || !main) return;
+        const offset = again.getBoundingClientRect().top - main.getBoundingClientRect().top;
+        if (offset < -8 || offset > 24) {
+          again.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 450);
+    };
+    attempt();
+  };
+
+  // 统一开关入口：替换模式下开新面板先关其它面板
   const openPanel = (id: string, setter: (v: boolean) => void) => {
     if (panelMode === 'replace') closeAllPanels();
     setter(true);
     setActivePanelId(id);
+    scrollToPanel(id);
   };
 
-  const togglePanel = (id: string, panelDomId: string, current: boolean, setter: (v: boolean) => void) => {
+  const togglePanel = (id: string, current: boolean, setter: (v: boolean) => void) => {
     if (current) {
       setter(false);
       setActivePanelId(null);
       return;
     }
     openPanel(id, setter);
-    setScrollToPanelId(panelDomId);
   };
 
   const switchBranch = useCallback(async (branchName: string) => {
@@ -332,11 +373,17 @@ function App() {
       setToast(`已切换到 ${branchName}`);
       await loadCommitsPage(0, true);
     } catch (e: any) {
+      // 主区域可能滚到了很深的位置，滚回顶部让红色错误条可见
+      mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       if (!checkoutSucceeded) {
         setActiveBranch(previousBranch);
+        setError(`切换分支失败：${String(e)}`);
+        setToast('切换分支失败');
+      } else {
+        // checkout 本身成功了，失败的是刷新列表，别把锅算到切换上
+        setError(`已切换到 ${branchName}，但刷新提交列表失败：${String(e)}`);
+        setToast('提交列表刷新失败');
       }
-      setError(String(e));
-      setToast('切换分支失败');
     } finally {
       setLoading(false);
     }
@@ -398,17 +445,12 @@ function App() {
   }, [torchSize]);
 
   useEffect(() => {
-    if (scrollToPanelId) {
-      const timer = setTimeout(() => {
-        const el = document.getElementById(scrollToPanelId);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        setScrollToPanelId(null);
-      }, 200);
-      return () => clearTimeout(timer);
-    }
-  }, [scrollToPanelId]);
+    document.documentElement.style.setProperty('--glass-blur', `${glassBlur}px`);
+  }, [glassBlur]);
+
+  useEffect(() => () => {
+    if (scrollTimerRef.current !== null) window.clearTimeout(scrollTimerRef.current);
+  }, []);
 
   const isLatestDetail = useLatestRequest();
   const handleCommitClick = async (hash: string) => {
@@ -533,9 +575,9 @@ function App() {
         }} />
       ) : (
         <img src={`data:image/jpeg;base64,${bgBase64}`} alt="background" style={{
-          position: 'fixed', top: 0, right: 0, width: 'auto', height: '100%',
-          objectFit: 'contain', objectPosition: 'right center', zIndex: -1, pointerEvents: 'none',
-          opacity: bgOpacity
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          objectFit: 'cover', objectPosition: bgStyle === 'preset' ? 'right center' : 'center',
+          zIndex: -1, pointerEvents: 'none', opacity: bgOpacity
         }} />
       )}
       <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: -1, background: 'radial-gradient(ellipse at center, rgba(5,9,20,0.08) 0%, rgba(5,9,20,0.25) 100%)' }} />
@@ -587,7 +629,7 @@ function App() {
           <div className="section-title"><VscSourceControl size={12} style={{ marginRight: 6 }} />仓库信息</div>
           <div className="separator" />
           <div className="section-title"><VscRepoForked size={12} style={{ marginRight: 6 }} />分支</div>
-          {branches.length > 0 ? branches.map(b => (
+          {branches.length > 0 ? (showAllBranches ? branches : branches.slice(0, 8)).map(b => (
             <div key={b.name} className={`branch-item ${b.name === activeBranch ? 'active' : ''}`} onClick={() => switchBranch(b.name)}>
               <span className="branch-dot" style={{ background: b.name === activeBranch ? 'var(--accent)' : 'var(--text-faint)' }} />
               {b.name}
@@ -595,15 +637,24 @@ function App() {
           )) : (
             <div style={{ color: 'var(--text-dim)', fontSize: 12, padding: '0 6px' }}>加载仓库后显示</div>
           )}
+          {branches.length > 8 && (
+            <div
+              className="branch-item"
+              onClick={() => setShowAllBranches(v => !v)}
+              style={{ color: 'var(--text-dim)', fontSize: 12, justifyContent: 'center' }}
+            >
+              {showAllBranches ? '收起分支' : `展开全部 ${branches.length} 个分支`}
+            </div>
+          )}
           <div className="separator" />
 
           {renderSectionHeader('历史浏览', 'history')}
           <AnimatePresence>
             {expandedSections.history && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                <div className={`branch-item ${activePanelId === 'graph' ? 'panel-open' : ''}`} onClick={() => togglePanel('graph', 'panel-graph', showGraph, setShowGraph)}>提交图</div>
-                <div className={`branch-item ${activePanelId === 'filetree' ? 'panel-open' : ''}`} onClick={() => togglePanel('filetree', 'panel-filetree', showFileTree, setShowFileTree)}>文件树</div>
-                <div className={`branch-item ${activePanelId === 'filter' ? 'panel-open' : ''}`} onClick={() => togglePanel('filter', 'panel-filter', showCommitFilter, setShowCommitFilter)}>提交筛选</div>
+                <div className={`branch-item ${activePanelId === 'graph' ? 'panel-open' : ''}`} onClick={() => togglePanel('graph', showGraph, setShowGraph)}>提交图</div>
+                <div className={`branch-item ${activePanelId === 'filetree' ? 'panel-open' : ''}`} onClick={() => togglePanel('filetree', showFileTree, setShowFileTree)}>文件树</div>
+                <div className={`branch-item ${activePanelId === 'filter' ? 'panel-open' : ''}`} onClick={() => togglePanel('filter', showCommitFilter, setShowCommitFilter)}>提交筛选</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -612,10 +663,10 @@ function App() {
           <AnimatePresence>
             {expandedSections.trace && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                <div className={`branch-item ${activePanelId === 'syntax' ? 'panel-open' : ''}`} onClick={() => togglePanel('syntax', 'panel-syntax', showSyntaxHighlight, setShowSyntaxHighlight)}>Diff 高亮</div>
-                <div className={`branch-item ${activePanelId === 'sidebyside' ? 'panel-open' : ''}`} onClick={() => togglePanel('sidebyside', 'panel-sidebyside', showSideBySide, setShowSideBySide)}>并排对比</div>
-                <div className={`branch-item ${activePanelId === 'semantic' ? 'panel-open' : ''}`} onClick={() => togglePanel('semantic', 'panel-semantic', showSemanticSearch, setShowSemanticSearch)}>语义搜索</div>
-                <div className={`branch-item ${activePanelId === 'diffviewer' ? 'panel-open' : ''}`} onClick={() => togglePanel('diffviewer', 'panel-diffviewer', showDiffViewer, setShowDiffViewer)}>差异对比</div>
+                <div className={`branch-item ${activePanelId === 'syntax' ? 'panel-open' : ''}`} onClick={() => togglePanel('syntax', showSyntaxHighlight, setShowSyntaxHighlight)}>Diff 高亮</div>
+                <div className={`branch-item ${activePanelId === 'sidebyside' ? 'panel-open' : ''}`} onClick={() => togglePanel('sidebyside', showSideBySide, setShowSideBySide)}>并排对比</div>
+                <div className={`branch-item ${activePanelId === 'semantic' ? 'panel-open' : ''}`} onClick={() => togglePanel('semantic', showSemanticSearch, setShowSemanticSearch)}>语义搜索</div>
+                <div className={`branch-item ${activePanelId === 'diffviewer' ? 'panel-open' : ''}`} onClick={() => togglePanel('diffviewer', showDiffViewer, setShowDiffViewer)}>差异对比</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -624,11 +675,11 @@ function App() {
           <AnimatePresence>
             {expandedSections.analysis && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                <div className={`branch-item ${activePanelId === 'health' ? 'panel-open' : ''}`} onClick={() => { loadHealthReport(); setScrollToPanelId('panel-health'); }}>仓库健康</div>
-                <div className={`branch-item ${activePanelId === 'contributors' ? 'panel-open' : ''}`} onClick={() => { loadContributors(); setScrollToPanelId('panel-contributors'); }}>贡献者统计</div>
-                <div className={`branch-item ${activePanelId === 'hotfiles' ? 'panel-open' : ''}`} onClick={() => { loadHotFiles(); setScrollToPanelId('panel-hotfiles'); }}>热点文件</div>
-                <div className={`branch-item ${activePanelId === 'heatmap' ? 'panel-open' : ''}`} onClick={() => togglePanel('heatmap', 'panel-heatmap', showHeatmap, setShowHeatmap)}>提交热力图</div>
-                <div className={`branch-item ${activePanelId === 'knowledge' ? 'panel-open' : ''}`} onClick={() => togglePanel('knowledge', 'panel-knowledge', showKnowledge, setShowKnowledge)}>知识集中度</div>
+                <div className={`branch-item ${activePanelId === 'health' ? 'panel-open' : ''}`} onClick={() => loadHealthReport()}>仓库健康</div>
+                <div className={`branch-item ${activePanelId === 'contributors' ? 'panel-open' : ''}`} onClick={() => loadContributors()}>贡献者统计</div>
+                <div className={`branch-item ${activePanelId === 'hotfiles' ? 'panel-open' : ''}`} onClick={() => loadHotFiles()}>热点文件</div>
+                <div className={`branch-item ${activePanelId === 'heatmap' ? 'panel-open' : ''}`} onClick={() => togglePanel('heatmap', showHeatmap, setShowHeatmap)}>提交热力图</div>
+                <div className={`branch-item ${activePanelId === 'knowledge' ? 'panel-open' : ''}`} onClick={() => togglePanel('knowledge', showKnowledge, setShowKnowledge)}>知识集中度</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -637,11 +688,11 @@ function App() {
           <AnimatePresence>
             {expandedSections.actions && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                <div className={`branch-item ${activePanelId === 'stash' ? 'panel-open' : ''}`} onClick={() => { loadStashList(); setScrollToPanelId('panel-stash'); }}>Stash 管理</div>
-                <div className={`branch-item ${activePanelId === 'rebase' ? 'panel-open' : ''}`} onClick={() => { loadRebaseCommits(); setScrollToPanelId('panel-rebase'); }}>交互 Rebase</div>
-                <div className={`branch-item ${activePanelId === 'tags' ? 'panel-open' : ''}`} onClick={() => togglePanel('tags', 'panel-tags', showTagManager, setShowTagManager)}>标签管理</div>
-                <div className={`branch-item ${activePanelId === 'remotes' ? 'panel-open' : ''}`} onClick={() => togglePanel('remotes', 'panel-remotes', showRemoteManager, setShowRemoteManager)}>远程仓库</div>
-                <div className={`branch-item ${activePanelId === 'multirepo' ? 'panel-open' : ''}`} onClick={() => togglePanel('multirepo', 'panel-multirepo', showMultiRepo, setShowMultiRepo)}>多仓库</div>
+                <div className={`branch-item ${activePanelId === 'stash' ? 'panel-open' : ''}`} onClick={() => loadStashList()}>Stash 管理</div>
+                <div className={`branch-item ${activePanelId === 'rebase' ? 'panel-open' : ''}`} onClick={() => loadRebaseCommits()}>交互 Rebase</div>
+                <div className={`branch-item ${activePanelId === 'tags' ? 'panel-open' : ''}`} onClick={() => togglePanel('tags', showTagManager, setShowTagManager)}>标签管理</div>
+                <div className={`branch-item ${activePanelId === 'remotes' ? 'panel-open' : ''}`} onClick={() => togglePanel('remotes', showRemoteManager, setShowRemoteManager)}>远程仓库</div>
+                <div className={`branch-item ${activePanelId === 'multirepo' ? 'panel-open' : ''}`} onClick={() => togglePanel('multirepo', showMultiRepo, setShowMultiRepo)}>多仓库</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -650,8 +701,8 @@ function App() {
           <AnimatePresence>
             {expandedSections.search_export && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                <div className={`branch-item ${activePanelId === 'changelog' ? 'panel-open' : ''}`} onClick={() => togglePanel('changelog', 'panel-changelog', showChangelog, setShowChangelog)}>变更日志</div>
-                <div className={`branch-item ${activePanelId === 'export' ? 'panel-open' : ''}`} onClick={() => togglePanel('export', 'panel-export', showExportHTML, setShowExportHTML)}>导出报告</div>
+                <div className={`branch-item ${activePanelId === 'changelog' ? 'panel-open' : ''}`} onClick={() => togglePanel('changelog', showChangelog, setShowChangelog)}>变更日志</div>
+                <div className={`branch-item ${activePanelId === 'export' ? 'panel-open' : ''}`} onClick={() => togglePanel('export', showExportHTML, setShowExportHTML)}>导出报告</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -660,12 +711,12 @@ function App() {
           <AnimatePresence>
             {expandedSections.advanced && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
-                <div className={`branch-item ${activePanelId === 'hooks' ? 'panel-open' : ''}`} onClick={() => togglePanel('hooks', 'panel-hooks', showHookManager, setShowHookManager)}>Git Hooks</div>
-                <div className={`branch-item ${activePanelId === 'conflict' ? 'panel-open' : ''}`} onClick={() => togglePanel('conflict', 'panel-conflict', showConflictResolver, setShowConflictResolver)}>冲突解决</div>
-                <div className={`branch-item ${activePanelId === 'scripts' ? 'panel-open' : ''}`} onClick={() => togglePanel('scripts', 'panel-scripts', showScriptRunner, setShowScriptRunner)}>脚本扩展</div>
-                <div className={`branch-item ${activePanelId === 'sql' ? 'panel-open' : ''}`} onClick={() => togglePanel('sql', 'panel-sql', showQueryConsole, setShowQueryConsole)}>SQL 查询</div>
-                <div className={`branch-item ${activePanelId === 'timemachine' ? 'panel-open' : ''}`} onClick={() => togglePanel('timemachine', 'panel-timemachine', showTimeMachine, setShowTimeMachine)}>时间机器</div>
-                <div className={`branch-item ${activePanelId === 'ui' ? 'panel-open' : ''}`} onClick={() => togglePanel('ui', 'panel-ui', showUIManager, setShowUIManager)}>UI 管理</div>
+                <div className={`branch-item ${activePanelId === 'hooks' ? 'panel-open' : ''}`} onClick={() => togglePanel('hooks', showHookManager, setShowHookManager)}>Git Hooks</div>
+                <div className={`branch-item ${activePanelId === 'conflict' ? 'panel-open' : ''}`} onClick={() => togglePanel('conflict', showConflictResolver, setShowConflictResolver)}>冲突解决</div>
+                <div className={`branch-item ${activePanelId === 'scripts' ? 'panel-open' : ''}`} onClick={() => togglePanel('scripts', showScriptRunner, setShowScriptRunner)}>脚本扩展</div>
+                <div className={`branch-item ${activePanelId === 'sql' ? 'panel-open' : ''}`} onClick={() => togglePanel('sql', showQueryConsole, setShowQueryConsole)}>SQL 查询</div>
+                <div className={`branch-item ${activePanelId === 'timemachine' ? 'panel-open' : ''}`} onClick={() => togglePanel('timemachine', showTimeMachine, setShowTimeMachine)}>时间机器</div>
+                <div className={`branch-item ${activePanelId === 'ui' ? 'panel-open' : ''}`} onClick={() => togglePanel('ui', showUIManager, setShowUIManager)}>UI 管理</div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -713,7 +764,7 @@ function App() {
 
                     <AnimatePresence>
                       {isSelected && (
-                        <motion.div className="commit-detail" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3, type: 'spring', stiffness: 120 }} style={{ marginTop: 8, marginBottom: 16, overflow: 'hidden' }}>
+                        <motion.div className="commit-detail" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.22, ease: 'easeOut' }} style={{ marginTop: 8, marginBottom: 16, overflow: 'hidden' }}>
                           {detailLoading ? (
                             <div style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 20 }}>加载详情中...</div>
                           ) : commitDetail ? (
@@ -748,13 +799,10 @@ function App() {
                                     <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>拖拽进度浏览: <strong>{currentFileIndex + 1}</strong> / {commitDetail.files.length}</span>
                                     <span style={{ color: 'var(--accent)', fontWeight: 600, minWidth: 0, flex: 1, wordBreak: 'break-all', lineHeight: 1.5 }} title={commitDetail.files[currentFileIndex]?.path}>{commitDetail.files[currentFileIndex]?.path}</span>
                                   </div>
-                                  <input
-                                    type="range"
-                                    min={0}
-                                    max={commitDetail.files.length - 1}
-                                    value={currentFileIndex}
-                                    onChange={(e) => setCurrentFileIndex(Number(e.target.value))}
-                                    style={{ width: '100%', cursor: 'pointer' }}
+                                  <FileScrubber
+                                    files={commitDetail.files}
+                                    index={currentFileIndex}
+                                    onChange={setCurrentFileIndex}
                                   />
                                 </div>
                               )}
@@ -782,7 +830,7 @@ function App() {
 
                                       <AnimatePresence>
                                         {activeBlame === file.path && (
-                                          <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                          <motion.div className="blame-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}>
                                             <div className="blame-header">Blame — {file.path}</div>
                                             {blameData.map((line) => (
                                               <div key={line.line_number} className="blame-line">
@@ -794,7 +842,7 @@ function App() {
                                       </AnimatePresence>
                                       <AnimatePresence>
                                         {activeTimeline === file.path && (
-                                          <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                          <motion.div className="timeline-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}>
                                             <div className="timeline-header">文件历史 — {file.path}</div>
                                             {timelineData.map((entry) => (
                                               <div key={entry.commit_hash} className="timeline-entry">
@@ -829,7 +877,7 @@ function App() {
 
                                     <AnimatePresence>
                                       {activeBlame === file.path && (
-                                        <motion.div className="blame-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                        <motion.div className="blame-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}>
                                           <div className="blame-header">Blame — {file.path}</div>
                                           {blameData.map((line) => (
                                             <div key={line.line_number} className="blame-line">
@@ -841,7 +889,7 @@ function App() {
                                     </AnimatePresence>
                                     <AnimatePresence>
                                       {activeTimeline === file.path && (
-                                        <motion.div className="timeline-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                        <motion.div className="timeline-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}>
                                           <div className="timeline-header">文件历史 — {file.path}</div>
                                           {timelineData.map((entry) => (
                                             <div key={entry.commit_hash} className="timeline-entry">
@@ -881,7 +929,7 @@ function App() {
           )}
 
           {showHealth && healthReport && (
-            <motion.div id="panel-health" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+            <motion.div id="panel-health" className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
               <h3>仓库健康报告</h3>
               {healthReport.large_files.length > 0 && (<div className="analysis-section"><div className="section-title">大文件</div>{healthReport.large_files.map(f => <div key={f} className="analysis-item">{f}</div>)}</div>)}
               {healthReport.stale_branches.length > 0 && (<div className="analysis-section"><div className="section-title">无上游分支</div>{healthReport.stale_branches.map(b => <div key={b} className="analysis-item">{b}</div>)}</div>)}
@@ -891,7 +939,7 @@ function App() {
           )}
 
           {showContributors && (
-            <motion.div id="panel-contributors" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+            <motion.div id="panel-contributors" className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
               <h3>贡献者统计</h3>
               {contributors.map(c => (
                 <div key={c.author} className="analysis-item">
@@ -906,7 +954,7 @@ function App() {
           )}
 
           {showHotFiles && (
-            <motion.div id="panel-hotfiles" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+            <motion.div id="panel-hotfiles" className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
               <h3>热点文件 Top 20</h3>
               {hotFiles.map(f => (<div key={f.path} className="analysis-item"><span className="file-path">{f.path}</span><span className="time" style={{ float: 'right' }}>{f.changes} 次变更</span></div>))}
             </motion.div>
@@ -917,7 +965,7 @@ function App() {
           {showKnowledge && <div id="panel-knowledge"><KnowledgeReport repoPath={repoPath} /></div>}
 
           {showStash && (
-            <motion.div id="panel-stash" className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+            <motion.div id="panel-stash" className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
               <h3>Stash 列表</h3>
               {stashList.length === 0 && <div className="analysis-item">暂无 stash</div>}
               {stashList.map(s => (
@@ -932,7 +980,7 @@ function App() {
           )}
 
           {showRebase && (
-            <motion.div id="panel-rebase" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} style={{ marginTop: 16 }}>
+            <motion.div id="panel-rebase" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={{ marginTop: 16 }}>
               <EnhancedRebase repoPath={repoPath} onComplete={() => { setShowRebase(false); setActivePanelId(null); loadRepo(); }} />
             </motion.div>
           )}
@@ -950,7 +998,7 @@ function App() {
               )}
             </div>
           )}
-          {showCommitFilter && <div id="panel-filter"><CommitFilter repoPath={repoPath} onFiltered={(filtered) => { setCommits(filtered); setTotalCommits(filtered.length); setHasMore(false); setSelectedCommit(null); setCommitDetail(null); }} /></div>}
+          {showCommitFilter && <div id="panel-filter"><CommitFilter repoPath={repoPath} onFiltered={(filtered) => { setCommits(filtered); setTotalCommits(filtered.length); setHasMore(false); setSelectedCommit(null); setCommitDetail(null); }} onReset={() => loadRepo()} /></div>}
           {showTagManager && <div id="panel-tags"><TagManager repoPath={repoPath} /></div>}
           {showRemoteManager && <div id="panel-remotes"><RemoteManager repoPath={repoPath} /></div>}
           {showMultiRepo && <div id="panel-multirepo"><MultiRepo onSelectRepo={(path) => { setRepoPath(path); loadRepo(path); }} /></div>}
@@ -972,8 +1020,8 @@ function App() {
             panelMode={panelMode} setPanelMode={setPanelMode}
             theme={theme} setTheme={setTheme}
             torchSize={torchSize} setTorchSize={setTorchSize}
+            glassBlur={glassBlur} setGlassBlur={setGlassBlur}
             bgStyle={bgStyle} setBgStyle={setBgStyle}
-            onPickCustomBackground={handlePickBackgroundDirect}
             bgBase64={bgBase64}
           /></div>}
         </main>

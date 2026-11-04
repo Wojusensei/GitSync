@@ -30,7 +30,7 @@ export default function SemanticSearch({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>语义代码搜索</h3>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <input className="path-input" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索代码内容..." style={{ flex: 1 }} />

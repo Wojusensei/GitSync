@@ -21,7 +21,7 @@ export default function RemoteManager({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>远程仓库</h3>
       <button className="btn btn-blue" onClick={loadRemotes}>加载远程</button>
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}

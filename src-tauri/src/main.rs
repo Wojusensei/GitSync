@@ -249,8 +249,56 @@ fn checkout_branch(path: String, branch_name: String) -> Result<(), String> {
             .map_err(|e| format!("设置上游失败: {}", e))?;
     }
 
+    // 预检：工作区改动与目标分支改动重叠时 safe checkout 必然失败，
+    // 先列出挡路的文件，避免把 libgit2 的英文错误直接抛给用户
+    let mut blocking: Vec<String> = Vec::new();
+    if let Ok(target_tree) = commit.tree() {
+        let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+        if let Ok(diff) = repo.diff_tree_to_tree(head_tree.as_ref(), Some(&target_tree), None) {
+            let changed: std::collections::HashSet<String> = diff
+                .deltas()
+                .filter_map(|d| d.new_file().path().or_else(|| d.old_file().path()))
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            if let Ok(statuses) = repo.statuses(None) {
+                for entry in statuses.iter() {
+                    let status = entry.status();
+                    let dirty = status.intersects(
+                        git2::Status::WT_MODIFIED
+                            | git2::Status::INDEX_MODIFIED
+                            | git2::Status::WT_DELETED
+                            | git2::Status::INDEX_DELETED
+                            | git2::Status::WT_RENAMED
+                            | git2::Status::INDEX_RENAMED
+                            | git2::Status::WT_NEW,
+                    );
+                    if dirty {
+                        if let Ok(path) = entry.path() {
+                            if changed.contains(path) {
+                                blocking.push(path.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !blocking.is_empty() {
+        blocking.truncate(5);
+        return Err(format!(
+            "工作区有未提交修改，切换会覆盖这些文件：{}。请先提交或 stash 后再切换",
+            blocking.join("、")
+        ));
+    }
+
     repo.checkout_tree(&commit.as_object(), Some(&mut git2::build::CheckoutBuilder::default()))
-        .map_err(|e| format!("切换分支失败: {}", e))?;
+        .map_err(|e| {
+            if e.code() == git2::ErrorCode::Conflict {
+                "切换分支失败：工作区存在与目标分支冲突的修改，请先提交或 stash 后再切换".to_string()
+            } else {
+                format!("切换分支失败: {}", e)
+            }
+        })?;
 
     repo.set_head(&format!("refs/heads/{}", target))
         .map_err(|e| format!("设置 HEAD 失败: {}", e))?;

@@ -71,7 +71,7 @@ export default function CommitHeatmap({ repoPath }: { repoPath: string }) {
   }, [days]);
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>提交热力图</h3>
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}
       {loading ? (

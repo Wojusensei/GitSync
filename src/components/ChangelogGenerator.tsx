@@ -40,14 +40,16 @@ export default function ChangelogGenerator({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>生成变更日志</h3>
       <button className="btn btn-blue" onClick={generate} disabled={loading} style={{ marginBottom: 12 }}>{loading ? '生成中...' : '生成'}</button>
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}
       {entries.map((e, i) => (
-        <div key={i} className="analysis-item">
-          <span className="section-title">{e.date}</span>
-          {e.messages.map((m, j) => <div key={j} className="message">- {m.split('\n')[0]}</div>)}
+        <div key={i} className="changelog-group">
+          <div className="changelog-date">{e.date}</div>
+          <ul className="changelog-list">
+            {e.messages.map((m, j) => <li key={j}>{m.split('\n')[0]}</li>)}
+          </ul>
         </div>
       ))}
       {entries.length > 0 && <button className="btn btn-blue" onClick={copyToClipboard}>复制到剪贴板</button>}

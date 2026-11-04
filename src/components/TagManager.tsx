@@ -35,7 +35,7 @@ export default function TagManager({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>标签管理</h3>
       <button className="btn btn-blue" onClick={loadTags}>加载标签</button>
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}

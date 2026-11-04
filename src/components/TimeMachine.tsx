@@ -28,15 +28,19 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   const [snapshot, setSnapshot] = useState<TimeMachineSnapshot | null>(null);
   const [fileContent, setFileContent] = useState('');
   const [selectedFile, setSelectedFile] = useState('');
-  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
+  // 游标是提交序号而不是时间：提交间隔可能几个月，按时间映射会让进度条大跳
+  const [timestamps, setTimestamps] = useState<number[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);
-  const [minTime, setMinTime] = useState(0);
-  const [maxTime, setMaxTime] = useState(Math.floor(Date.now() / 1000));
-  const intervalRef = useRef<number | null>(null);
-  // 快照请求序号：播放时 200ms 一发不等返回，晚到的旧响应会覆盖新快照
+  const playTimerRef = useRef<number | null>(null);
+  const timestampsRef = useRef<number[]>([]);
+  const playIdxRef = useRef(0);
+  // 上一张快照还没回来时跳过本次加载，避免请求堆积
+  const playPendingRef = useRef(false);
+  // 快照请求序号：晚到的旧响应不能覆盖新快照
   const snapshotSeqRef = useRef(0);
-  // 播放中调速：interval 里读 ref，避免闭包拿到旧值
+  // 播放中调速：定时器里读 ref，避免闭包拿到旧值
   const playSpeedRef = useRef(1);
   useEffect(() => { playSpeedRef.current = playSpeed; }, [playSpeed]);
 
@@ -47,10 +51,11 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
         if (commits.length > 0) {
           const times = commits.map((c: any) => parseGitTime(c.time)).filter(t => !isNaN(t));
           if (times.length > 0) {
-            setMinTime(Math.min(...times));
-            setMaxTime(Math.max(...times));
-            setCurrentTime(Math.max(...times));
-            loadSnapshot(Math.max(...times));
+            const sorted = [...new Set(times)].sort((a, b) => a - b);
+            timestampsRef.current = sorted;
+            setTimestamps(sorted);
+            setCurrentIndex(sorted.length - 1);
+            loadSnapshot(sorted[sorted.length - 1]);
           }
         }
       } catch (e) { console.error(e); }
@@ -61,7 +66,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   // 卸载时停掉定时器
   useEffect(() => {
     return () => {
-      if (intervalRef.current !== null) clearInterval(intervalRef.current);
+      if (playTimerRef.current !== null) window.clearTimeout(playTimerRef.current);
     };
   }, []);
 
@@ -76,30 +81,47 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const ts = parseInt(e.target.value);
-    setCurrentTime(ts);
-    loadSnapshot(ts);
+    if (isPlaying) stopPlay();
+    const index = Number(e.target.value);
+    setCurrentIndex(index);
+    const ts = timestampsRef.current[index];
+    if (ts !== undefined) loadSnapshot(ts);
   };
 
+  const playInterval = (speed: number) => (speed >= 20 ? 60 : speed >= 5 ? 140 : 350);
+
   const startPlay = () => {
-    if (isPlaying) return;
+    const list = timestampsRef.current;
+    if (isPlaying || list.length < 2) return;
+    // 从下一条提交开始；已经在最后就从头播
+    let idx = currentIndex + 1;
+    if (idx >= list.length) idx = 0;
+    playIdxRef.current = idx;
     setIsPlaying(true);
-    intervalRef.current = setInterval(() => {
-      setCurrentTime(prev => {
-        const next = prev + playSpeedRef.current * 10;
-        if (next >= maxTime) {
-          clearInterval(intervalRef.current!);
-          setIsPlaying(false);
-          return maxTime;
-        }
-        loadSnapshot(next);
-        return next;
-      });
-    }, 200);
+
+    const tick = () => {
+      const times = timestampsRef.current;
+      if (playIdxRef.current >= times.length) {
+        setIsPlaying(false);
+        playTimerRef.current = null;
+        return;
+      }
+      const index = playIdxRef.current++;
+      setCurrentIndex(index);
+      if (!playPendingRef.current) {
+        playPendingRef.current = true;
+        void loadSnapshot(times[index]).finally(() => { playPendingRef.current = false; });
+      }
+      playTimerRef.current = window.setTimeout(tick, playInterval(playSpeedRef.current));
+    };
+    tick();
   };
 
   const stopPlay = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (playTimerRef.current !== null) {
+      window.clearTimeout(playTimerRef.current);
+      playTimerRef.current = null;
+    }
     setIsPlaying(false);
   };
 
@@ -117,7 +139,7 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>时间机器</h3>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
@@ -130,15 +152,17 @@ export default function TimeMachine({ repoPath }: { repoPath: string }) {
         </select>
         <span style={{ fontSize: 13, color: 'var(--text-dim)', marginLeft: 'auto' }}>
           {snapshot?.time || '加载中...'}
+          {timestamps.length > 1 && ` · ${currentIndex + 1}/${timestamps.length}`}
         </span>
       </div>
 
       <input
         type="range"
-        min={minTime}
-        max={maxTime}
-        value={currentTime}
+        min={0}
+        max={Math.max(timestamps.length - 1, 0)}
+        value={currentIndex}
         onChange={handleSliderChange}
+        disabled={timestamps.length < 2}
         style={{ width: '100%', marginTop: 12 }}
       />
 

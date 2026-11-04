@@ -20,18 +20,29 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
   const [activeFile, setActiveFile] = useState<ConflictDetail | null>(null);
   const [resolutions, setResolutions] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState('');
 
   const load = async () => {
     setError('');
+    setNotice('');
+    setLoading(true);
     try {
       const res = await invokeTauri<ConflictDetail[]>('get_conflict_detail', { path: repoPath });
       setFiles(res);
       if (res.length > 0) {
         setActiveFile(res[0]);
         setResolutions(res[0].conflict_blocks.map(() => ''));
+        setNotice(`已加载 ${res.length} 个冲突文件`);
+      } else {
+        setActiveFile(null);
+        setResolutions([]);
+        setNotice('当前没有冲突文件');
       }
     } catch (e: any) {
       setError(String(e));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -80,9 +91,12 @@ export default function ConflictResolver({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>图形化冲突解决</h3>
-      <button className="btn btn-blue" onClick={load}>加载冲突文件</button>
+      <button className="btn btn-blue" onClick={load} disabled={loading}>
+        {loading ? '加载中…' : '加载冲突文件'}
+      </button>
+      {notice && <div className="analysis-item" style={{ color: 'var(--text-dim)', fontSize: 12 }}>{notice}</div>}
       {error && <div className="analysis-item" style={{ color: 'var(--danger)' }}>{error}</div>}
 
       {files.length > 0 && (

@@ -61,6 +61,7 @@
   --scroll-thumb:rgba(255,255,255,0.15);
   --scroll-thumb-hover:rgba(255,255,255,0.3);
   --text-shadow:0 1px 2px rgba(0,0,0,0.2);
+  --glass-blur:10px;
   --font-mono:'SF Mono','Fira Code','Cascadia Code',monospace;
   /* 弹窗/浮层永远压在暗色毛玻璃上，不随主题反转 */
   --overlay-panel:rgba(255,255,255,0.04);
@@ -142,19 +143,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .app{position:relative;z-index:1;display:grid;grid-template-columns:clamp(200px, 22vw, 280px) 1fr;grid-template-rows:56px 1fr;height:100vh;gap:0}
 
 /* 顶部栏 - 超薄玻璃背景 */
-.topbar{grid-column:1/-1;background:var(--chrome);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border-bottom:1px solid var(--border);box-shadow:0 1px 0 var(--chrome-highlight);display:flex;align-items:center;padding:0 20px;gap:16px;z-index:10;min-width:0}
+.topbar{grid-column:1/-1;background:var(--chrome);backdrop-filter:blur(var(--glass-blur)) saturate(150%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(150%);border-bottom:1px solid var(--border);box-shadow:0 1px 0 var(--chrome-highlight);display:flex;align-items:center;padding:0 20px;gap:16px;z-index:10;min-width:0}
 .topbar h1{font-size:15px;font-weight:600;color:var(--text);letter-spacing:0.5px;display:flex;align-items:center;gap:10px;text-shadow:var(--text-shadow);white-space:nowrap;flex-shrink:0}
-.topbar .path-input{flex:1;min-width:0;background:var(--panel-strong);border:1px solid var(--border-strong);border-radius:10px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;transition:all 0.3s;backdrop-filter:blur(10px)}
+.topbar .path-input{flex:1;min-width:0;background:var(--panel-strong);border:1px solid var(--border-strong);border-radius:10px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;transition:all 0.3s;backdrop-filter:blur(var(--glass-blur))}
 .topbar .path-input:focus{border-color:var(--accent-border);background:var(--panel-strong);box-shadow:0 0 12px var(--accent-dim)}
 .topbar .path-input::placeholder{color:var(--text-faint)}
-.topbar button{background:var(--btn-primary-bg);border:1px solid var(--btn-primary-border);color:var(--on-accent);padding:7px 20px;border-radius:10px;font-size:13px;cursor:pointer;transition:all 0.3s;font-weight:600;backdrop-filter:blur(10px);position:relative;overflow:hidden;white-space:nowrap;flex-shrink:0}
+.topbar button{background:var(--btn-primary-bg);border:1px solid var(--btn-primary-border);color:var(--on-accent);padding:7px 20px;border-radius:10px;font-size:13px;cursor:pointer;transition:all 0.3s;font-weight:600;backdrop-filter:blur(var(--glass-blur));position:relative;overflow:hidden;white-space:nowrap;flex-shrink:0}
 .topbar button:hover{background:var(--btn-primary-bg-hover);border-color:var(--btn-primary-border-hover);box-shadow:var(--accent-glow)}
 .topbar button:active{transform:scale(0.96)}
 
 /* 侧边栏 - 超薄玻璃背景 */
-.sidebar{background:var(--chrome);backdrop-filter:blur(12px) saturate(150%);-webkit-backdrop-filter:blur(12px) saturate(150%);border-right:1px solid var(--border);box-shadow:inset 0 1px 0 var(--chrome-highlight);padding:20px 14px;overflow-y:auto;z-index:5;transition:transform 0.1s ease-out}
+.sidebar{background:var(--chrome);backdrop-filter:blur(var(--glass-blur)) saturate(150%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(150%);border-right:1px solid var(--border);box-shadow:inset 0 1px 0 var(--chrome-highlight);padding:20px 14px;overflow-y:auto;z-index:5;transition:transform 0.1s ease-out}
 .section-title{font-size:11px;text-transform:uppercase;color:var(--text-dim);letter-spacing:1.5px;margin-bottom:12px;padding:0 6px}
-.branch-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;font-size:13px;cursor:pointer;transition:all 0.3s;color:var(--text-secondary);margin-bottom:3px;position:relative;overflow:hidden;backdrop-filter:blur(8px);background:var(--panel)}
+.branch-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;font-size:13px;cursor:pointer;transition:all 0.3s;color:var(--text-secondary);margin-bottom:3px;position:relative;overflow:hidden;backdrop-filter:blur(var(--glass-blur));background:var(--panel)}
 .branch-item::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at var(--mouse-x,50%) var(--mouse-y,50%),var(--panel-strong) 0%,transparent 70%);opacity:0;transition:opacity 0.3s}
 .branch-item:hover::before{opacity:1}
 .branch-item:hover{background:var(--panel-strong);color:var(--text);transform:translateX(2px)}
@@ -164,9 +165,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .separator{height:1px;background:var(--border);margin:16px 0}
 
 /* 主内容区 - 超薄玻璃背景 */
-.main{background:var(--main-glass);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);box-shadow:inset 0 1px 0 var(--chrome-highlight);overflow-y:auto;padding:clamp(16px, 2vw, 24px);z-index:5;scroll-behavior:smooth;position:relative}
+.main{background:var(--main-glass);backdrop-filter:blur(var(--glass-blur)) saturate(120%);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(120%);box-shadow:inset 0 1px 0 var(--chrome-highlight);overflow-y:auto;padding:clamp(16px, 2vw, 24px);z-index:5;scroll-behavior:smooth;position:relative}
 .commit-list{position:relative;z-index:1;display:flex;flex-direction:column;gap:2px}
-.commit-item{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:12px 14px;cursor:pointer;position:relative;overflow:hidden;backdrop-filter:blur(10px);will-change:transform;transition:background 0.3s, box-shadow 0.3s, transform 0.3s}
+.commit-item{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:12px 14px;cursor:pointer;position:relative;overflow:hidden;backdrop-filter:blur(var(--glass-blur));will-change:transform;transition:background 0.3s, box-shadow 0.3s, transform 0.3s}
 .commit-item::after{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,var(--panel),transparent);transition:left 0.6s}
 .commit-item:hover::after{left:100%}
 .commit-item:hover{background:var(--panel-strong);border-color:var(--border-strong);box-shadow:0 8px 30px rgba(0,0,0,0.4);transform:scale(1.02)}
@@ -178,7 +179,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 .message{font-size:13px;color:var(--text-secondary);line-height:1.6;pointer-events:none;text-shadow:var(--text-shadow)}
 
 /* 动态鼠标光斑 - 全局跟踪 */
-.pointer-glow{position:fixed;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,var(--accent-dim),transparent);pointer-events:none;z-index:0;transform:translate(-50%,-50%);transition:left 0.1s ease-out, top 0.1s ease-out}
+.pointer-glow{position:fixed;width:var(--torch-radius, 300px);height:var(--torch-radius, 300px);border-radius:50%;background:radial-gradient(circle,var(--accent-dim),transparent);pointer-events:none;z-index:0;transform:translate(-50%,-50%);transition:left 0.1s ease-out, top 0.1s ease-out}
 
 /* 手电筒效果（范围由 CSS 变量控制） */
 .torch-glow{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;border-radius:14px;background:radial-gradient(circle var(--torch-radius, 300px) at var(--torch-x, 50%) var(--torch-y, 50%), var(--accent-dim), transparent);opacity:0;transition:opacity 0.2s}
@@ -189,7 +190,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 @keyframes ripple{to{transform:scale(4);opacity:0}}
 
 /* 状态栏 */
-.status-bar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--panel);border-radius:10px;margin-bottom:16px;font-size:12px;color:var(--text-dim);backdrop-filter:blur(10px);border:1px solid var(--border)}
+.status-bar{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--panel);border-radius:10px;margin-bottom:16px;font-size:12px;color:var(--text-dim);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--border)}
 .status-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 
@@ -204,13 +205,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 ::-webkit-scrollbar-thumb:hover{background:var(--scroll-thumb-hover)}
 
 /* 错误提示 */
-.error{background:var(--danger-dim);border:1px solid var(--danger-border);color:var(--danger);padding:12px 18px;border-radius:12px;font-size:13px;margin-bottom:16px;backdrop-filter:blur(10px);display:flex;align-items:flex-start;gap:10px}
+.error{background:var(--danger-dim);border:1px solid var(--danger-border);color:var(--danger);padding:12px 18px;border-radius:12px;font-size:13px;margin-bottom:16px;backdrop-filter:blur(var(--glass-blur));display:flex;align-items:flex-start;gap:10px}
 .error span{flex:1;word-break:break-all}
 .error-close{border:none;background:transparent;color:var(--danger);font-size:16px;line-height:1.3;cursor:pointer;padding:0 2px;flex-shrink:0}
 .error-close:hover{opacity:0.7}
 
 /* 提交详情面板 */
-.commit-detail{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;backdrop-filter:blur(12px);margin-top:8px}
+.commit-detail{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;backdrop-filter:blur(var(--glass-blur));margin-top:8px}
 .detail-file{margin-bottom:16px;border:1px solid var(--border-faint);border-radius:10px;overflow:hidden;background:var(--code-bg)}
 .detail-file-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--border-faint);font-size:13px}
 .file-status{font-family:var(--font-mono);font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}
@@ -247,8 +248,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 20px;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(var(--glass-blur));
   margin-bottom: 16px;
+  will-change: transform, opacity;
 }
 .analysis-panel h3 {
   font-size: 15px;
@@ -609,8 +611,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   font-weight: 500;
-  backdrop-filter: blur(8px) saturate(120%);
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(120%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(120%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -653,9 +655,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans SC','Pin
 }
 
 /* Global Input / Select Styling - Liquid Glass Aesthetic */
+input:not([type]),
 input[type="text"],
 input[type="search"],
 input[type="number"],
+input[type="password"],
+input[type="url"],
+input[type="email"],
+input[type="date"],
 textarea,
 select {
   background: var(--panel);
@@ -666,14 +673,19 @@ select {
   font-size: 13px;
   outline: none;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  backdrop-filter: blur(8px) saturate(120%);
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(120%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(120%);
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+input:not([type]):focus,
 input[type="text"]:focus,
 input[type="search"]:focus,
 input[type="number"]:focus,
+input[type="password"]:focus,
+input[type="url"]:focus,
+input[type="email"]:focus,
+input[type="date"]:focus,
 textarea:focus,
 select:focus {
   border-color: var(--accent-border);
@@ -758,8 +770,66 @@ input[type="range"]::-moz-range-thumb:hover {
 .cmd-item.cmd-active{background:var(--accent-dim)}
 
 /* 浮动「关闭面板」按钮：任意面板打开时出现在右下角 */
-.panel-close-fab{position:fixed;right:28px;bottom:28px;z-index:60;background:var(--btn-primary-bg);border:1px solid var(--btn-primary-border);color:var(--on-accent);padding:10px 18px;border-radius:999px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.35);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:all 0.25s}
+.panel-close-fab{position:fixed;right:28px;bottom:28px;z-index:60;background:var(--btn-primary-bg);border:1px solid var(--btn-primary-border);color:var(--on-accent);padding:10px 18px;border-radius:999px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.35);backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));transition:all 0.25s}
 .panel-close-fab:hover{background:var(--btn-primary-bg-hover);border-color:var(--btn-primary-border-hover)}
+
+/* 面板标题行：标题 + 右侧提示 */
+.panel-title-row{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.panel-title-row h3{margin-bottom:0}
+.panel-hint{font-size:12px;color:var(--text-dim);margin-left:auto}
+
+/* 提交筛选 */
+.filter-form{display:flex;flex-direction:column;gap:12px}
+.filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+.filter-field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text-dim);min-width:0}
+.filter-field>span{font-size:11px;letter-spacing:0.02em}
+.filter-input{width:100%;background:var(--panel-strong);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text);font-size:13px;outline:none;transition:all 0.25s;color-scheme:dark}
+.filter-input::placeholder{color:var(--text-faint)}
+.filter-input:focus{border-color:var(--accent-border);box-shadow:0 0 12px var(--accent-dim)}
+:root[data-theme='light'] .filter-input,
+:root[data-theme='soft'] .filter-input{color-scheme:light}
+.filter-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer}
+.filter-check input{accent-color:var(--accent)}
+.filter-actions{display:flex;gap:10px}
+
+/* 差异对比 */
+.diff-compare-bar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.diff-compare-bar .filter-field{flex:1 1 200px}
+.diff-swap{flex:0 0 auto;background:var(--panel-strong);border:1px solid var(--border-strong);color:var(--text-secondary);width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:16px;line-height:1;transition:all 0.25s;margin-bottom:1px}
+.diff-swap:hover{background:var(--accent-dim);border-color:var(--accent-border);color:var(--text)}
+.diff-view{max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--code-bg);font-family:var(--font-mono);font-size:12px;line-height:1.6}
+.diff-line{padding:0 12px;white-space:pre;color:var(--diff-text)}
+.diff-line.add{background:var(--diff-add-bg);color:var(--diff-add-text)}
+.diff-line.del{background:var(--diff-del-bg);color:var(--diff-del-text)}
+.diff-line.hunk{background:var(--diff-hunk-bg);color:var(--diff-hunk-text)}
+.diff-line.meta{color:var(--text-dim)}
+
+/* 文件变更滑杆：整条可拖，靠近哪个节点就落到哪个 */
+.file-scrubber{position:relative;height:30px;margin:8px 2px 0;cursor:pointer;touch-action:none;user-select:none}
+.file-scrubber-rail{position:absolute;left:0;right:0;top:13px;height:4px;border-radius:2px;background:var(--panel-strong)}
+.file-scrubber-fill{position:absolute;left:0;top:13px;height:4px;border-radius:2px;background:var(--accent);opacity:0.75}
+.file-scrubber-dot{position:absolute;top:11px;width:8px;height:8px;margin-left:-4px;border-radius:50%;background:var(--text-faint);transition:transform 0.15s,background 0.15s}
+.file-scrubber-dot.active{background:var(--on-accent);transform:scale(1.15)}
+.file-scrubber-thumb{position:absolute;top:7px;width:16px;height:16px;margin-left:-8px;border-radius:50%;background:var(--accent);border:2px solid var(--on-accent);box-shadow:0 2px 8px rgba(0,0,0,0.35);transition:transform 0.15s}
+.file-scrubber.dragging .file-scrubber-thumb{transform:scale(1.15)}
+.file-scrubber.dragging .file-scrubber-dot{transition:none}
+
+/* 背景图框选 */
+.cropper-overlay{position:fixed;inset:0;z-index:9998;background:rgba(4,6,12,0.55);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:24px}
+.cropper-card{background:var(--panel-strong);border:1px solid var(--border-strong);border-radius:16px;padding:18px;max-width:95vw;box-shadow:0 24px 60px rgba(0,0,0,0.45)}
+.cropper-viewport{position:relative;overflow:hidden;border-radius:10px;border:1px solid var(--border-strong);background:#000;cursor:grab;touch-action:none}
+.cropper-viewport:active{cursor:grabbing}
+.cropper-toolbar{display:flex;align-items:center;gap:10px;margin-top:12px}
+
+/* 变更日志：按日期分组，逐条一行 */
+.changelog-group{padding:10px 0;border-bottom:1px solid var(--border-faint)}
+.changelog-date{font-size:11px;color:var(--text-dim);margin-bottom:6px;letter-spacing:0.02em}
+.changelog-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--text-secondary);line-height:1.5;overflow-wrap:anywhere}
+.changelog-list li::marker{color:var(--accent)}
+
+@media (max-width: 720px){
+  .filter-grid{grid-template-columns:1fr}
+}
 
 /* 窄窗口：收紧间距与字号，保持与宽屏一致的信息密度 */
 @media (max-width: 900px){

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { VscSymbolColor, VscLightbulb, VscFileMedia, VscColorMode, VscLayout, VscCheck } from 'react-icons/vsc';
 import { pickBackgroundImage } from '../utils/backgroundImage';
+import ImageCropper from './ImageCropper';
 
 interface UIManagerProps {
   bgOpacity: number;
@@ -14,10 +15,10 @@ interface UIManagerProps {
   setTheme: (v: string) => void;
   torchSize: number;
   setTorchSize: (v: number) => void;
+  glassBlur: number;
+  setGlassBlur: (v: number) => void;
   bgStyle: 'preset' | 'md' | 'custom';
   setBgStyle: (v: 'preset' | 'md' | 'custom') => void;
-  // 返回是否成功选图：用户取消时调用方据此保持原背景风格
-  onPickCustomBackground: () => Promise<boolean>;
   bgBase64: string;   // 自定义背景缩略图
 }
 
@@ -28,12 +29,13 @@ export default function UIManager({
   panelMode, setPanelMode,
   theme, setTheme,
   torchSize, setTorchSize,
+  glassBlur, setGlassBlur,
   bgStyle, setBgStyle,
-  onPickCustomBackground,
   bgBase64,
 }: UIManagerProps) {
   const [customBgError, setCustomBgError] = useState('');
   const [bgPreview, setBgPreview] = useState<string | null>(null);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
   const themes = [
     { id: 'dark', label: '深色', bg: '#0a0a14' },
     { id: 'light', label: '浅色', bg: '#f0f0f0' },
@@ -51,11 +53,8 @@ export default function UIManager({
     setBgPreview(null);
     try {
       const b64 = await pickBackgroundImage();
-      setBgBase64(b64);
-      localStorage.setItem('bg_base64', b64);
-      setBgPreview(b64);
-      setBgStyle('custom');
-      localStorage.setItem('bgStyle', 'custom');
+      // 先框选，确认后再落盘
+      setCropSrc(b64);
     } catch (e: any) {
       // 用户在文件选择器里点取消不算错误，静默返回
       const msg = String(e);
@@ -76,16 +75,21 @@ export default function UIManager({
 
   const handleBgStyleChange = async (style: 'preset' | 'md' | 'custom') => {
     if (style === 'custom') {
-      // 成功时内部已置 custom；用户取消则保持原背景风格不变
-      await onPickCustomBackground();
+      await handlePickBackground();
       return;
+    }
+    if (style === 'preset') {
+      // 选回预设要同时把自定义图片换回默认，否则背景还停在自定义图
+      setBgBase64(defaultBgBase64);
+      localStorage.setItem('bg_base64', defaultBgBase64);
+      setBgPreview(null);
     }
     setBgStyle(style);
     localStorage.setItem('bgStyle', style);
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <VscLayout size={18} />
         UI 管理
@@ -212,6 +216,30 @@ export default function UIManager({
           style={{ width: '100%', accentColor: 'var(--accent)' }}
         />
 
+      </div>
+
+      <div className="analysis-section" style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <VscSymbolColor size={14} style={{ color: 'var(--text-dim)' }} />
+          <span className="section-title" style={{ marginBottom: 0 }}>玻璃通透度</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-dim)' }}>{glassBlur}px</span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="20"
+          value={glassBlur}
+          onChange={e => {
+            const val = Number(e.target.value);
+            setGlassBlur(val);
+            localStorage.setItem('glass_blur', String(val));
+          }}
+          style={{ width: '100%', accentColor: 'var(--accent)' }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>
+          <span>通透</span>
+          <span>磨砂</span>
+        </div>
       </div>
 
       <div className="analysis-section" style={{ marginTop: 16 }}>
@@ -364,6 +392,20 @@ export default function UIManager({
           </div>
         </div>
 
+      {cropSrc && (
+        <ImageCropper
+          src={cropSrc}
+          onCancel={() => setCropSrc(null)}
+          onConfirm={(b64) => {
+            setBgBase64(b64);
+            localStorage.setItem('bg_base64', b64);
+            setBgPreview(b64);
+            setBgStyle('custom');
+            localStorage.setItem('bgStyle', 'custom');
+            setCropSrc(null);
+          }}
+        />
+      )}
     </motion.div>
   );
 }

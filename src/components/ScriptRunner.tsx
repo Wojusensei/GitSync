@@ -33,7 +33,7 @@ export default function ScriptRunner({ repoPath }: { repoPath: string }) {
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>脚本扩展</h3>
       <button className="btn btn-blue" onClick={loadScripts}>加载脚本</button>
       <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>

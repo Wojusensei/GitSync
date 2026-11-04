@@ -28,7 +28,7 @@ export default function KnowledgeReport({ repoPath }: { repoPath: string }) {
   }, [repoPath]);
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>知识集中度</h3>
       <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
         巴士因子 = 覆盖 50% 改动需要的人数，1 表示单点依赖

@@ -25,7 +25,7 @@ export default function SideBySideDiff({ repoPath, commitHash }: { repoPath: str
   };
 
   return (
-    <motion.div className="analysis-panel" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
+    <motion.div className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
       <h3>并排对比</h3>
       <button className="btn btn-blue" onClick={load} disabled={loading}>
         {loading ? '加载中...' : '加载对比'}
