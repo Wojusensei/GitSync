@@ -18,6 +18,10 @@ import EnhancedRebase from './components/EnhancedRebase';
 import CommandPalette from './components/CommandPalette';
 import GraphView from './components/GraphView';
 import FileScrubber from './components/FileScrubber';
+import ImageDiffView, { IMAGE_DIFF_RE } from './components/ImageDiffView';
+import ReflogPanel from './components/ReflogPanel';
+import RepoExtrasPanel from './components/RepoExtrasPanel';
+import SignatureBadge from './components/SignatureBadge';
 import FileTree from './components/FileTree';
 import FileViewer from './components/FileViewer';
 import CommitFilter from './components/CommitFilter';
@@ -47,6 +51,9 @@ interface Commit {
 interface Branch {
   name: string;
   is_head: boolean;
+  upstream?: string | null;
+  ahead?: number | null;
+  behind?: number | null;
 }
 
 interface FileChange {
@@ -264,6 +271,8 @@ function App() {
   const [showQueryConsole, setShowQueryConsole] = useState(false);
   const [showTimeMachine, setShowTimeMachine] = useState(false);
   const [showUIManager, setShowUIManager] = useState(false);
+  const [showReflog, setShowReflog] = useState(false);
+  const [showExtras, setShowExtras] = useState(false);
 
   // 侧边栏折叠
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -289,6 +298,20 @@ function App() {
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [hotFiles, setHotFiles] = useState<HotFile[]>([]);
   const [stashList, setStashList] = useState<StashEntry[]>([]);
+  const [stashPreview, setStashPreview] = useState<{ index: number; files: { path: string; status: string; diff: string }[] } | null>(null);
+
+  const toggleStashPreview = async (index: number) => {
+    if (stashPreview?.index === index) {
+      setStashPreview(null);
+      return;
+    }
+    try {
+      const files = await invoke<{ path: string; status: string; diff: string }[]>('stash_preview', { path: repoPath, index });
+      setStashPreview({ index, files });
+    } catch (e: any) {
+      setError(String(e));
+    }
+  };
 
   const [activePanelId, setActivePanelId] = useState<string | null>(null);
 
@@ -302,7 +325,7 @@ function App() {
     setShowSideBySide(false); setShowHookManager(false); setShowConflictResolver(false);
     setShowExportHTML(false); setShowSemanticSearch(false); setShowDiffViewer(false);
     setShowChangelog(false); setShowScriptRunner(false); setShowQueryConsole(false);
-    setShowTimeMachine(false); setShowUIManager(false);
+    setShowTimeMachine(false); setShowUIManager(false); setShowReflog(false); setShowExtras(false);
     setSelectedTreeFile(null);
     setActivePanelId(null);
   };
@@ -632,7 +655,11 @@ function App() {
           {branches.length > 0 ? (showAllBranches ? branches : branches.slice(0, 8)).map(b => (
             <div key={b.name} className={`branch-item ${b.name === activeBranch ? 'active' : ''}`} onClick={() => switchBranch(b.name)}>
               <span className="branch-dot" style={{ background: b.name === activeBranch ? 'var(--accent)' : 'var(--text-faint)' }} />
-              {b.name}
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</span>
+              <span className="branch-sync">
+                {(b.ahead ?? 0) > 0 && <span className="branch-ahead" title={`比 ${b.upstream} 多 ${b.ahead} 个提交`}>↑{b.ahead}</span>}
+                {(b.behind ?? 0) > 0 && <span className="branch-behind" title={`比 ${b.upstream} 少 ${b.behind} 个提交`}>↓{b.behind}</span>}
+              </span>
             </div>
           )) : (
             <div style={{ color: 'var(--text-dim)', fontSize: 12, padding: '0 6px' }}>加载仓库后显示</div>
@@ -689,6 +716,8 @@ function App() {
             {expandedSections.actions && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} style={{ overflow: 'hidden' }}>
                 <div className={`branch-item ${activePanelId === 'stash' ? 'panel-open' : ''}`} onClick={() => loadStashList()}>Stash 管理</div>
+                <div className={`branch-item ${activePanelId === 'reflog' ? 'panel-open' : ''}`} onClick={() => togglePanel('reflog', showReflog, setShowReflog)}>Reflog 找回</div>
+                <div className={`branch-item ${activePanelId === 'extras' ? 'panel-open' : ''}`} onClick={() => togglePanel('extras', showExtras, setShowExtras)}>子模块 / Worktree</div>
                 <div className={`branch-item ${activePanelId === 'rebase' ? 'panel-open' : ''}`} onClick={() => loadRebaseCommits()}>交互 Rebase</div>
                 <div className={`branch-item ${activePanelId === 'tags' ? 'panel-open' : ''}`} onClick={() => togglePanel('tags', showTagManager, setShowTagManager)}>标签管理</div>
                 <div className={`branch-item ${activePanelId === 'remotes' ? 'panel-open' : ''}`} onClick={() => togglePanel('remotes', showRemoteManager, setShowRemoteManager)}>远程仓库</div>
@@ -771,7 +800,10 @@ function App() {
                             <div>
                               {/* Header controls for browsing mode */}
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                                <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                  <div style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600 }}>{commitDetail.files.length} 个文件变更</div>
+                                  <SignatureBadge repoPath={repoPath} commitHash={commitDetail.hash} />
+                                </div>
                                 {commitDetail.files.length > 1 && (
                                   <div style={{ display: 'flex', gap: 8 }}>
                                     <button
@@ -826,7 +858,7 @@ function App() {
                                       </div>
                                       
                                       {/* Code Syntax Highlighted Diff */}
-                                      {parseAndRenderDiff(file.diff)}
+                                      {IMAGE_DIFF_RE.test(file.path) ? <ImageDiffView repoPath={repoPath} commitHash={commitDetail.hash} filePath={file.path} /> : parseAndRenderDiff(file.diff)}
 
                                       <AnimatePresence>
                                         {activeBlame === file.path && (
@@ -873,7 +905,7 @@ function App() {
                                     </div>
                                     
                                     {/* Code Syntax Highlighted Diff */}
-                                    {parseAndRenderDiff(file.diff)}
+                                    {IMAGE_DIFF_RE.test(file.path) ? <ImageDiffView repoPath={repoPath} commitHash={commitDetail.hash} filePath={file.path} /> : parseAndRenderDiff(file.diff)}
 
                                     <AnimatePresence>
                                       {activeBlame === file.path && (
@@ -964,15 +996,35 @@ function App() {
 
           {showKnowledge && <div id="panel-knowledge"><KnowledgeReport repoPath={repoPath} /></div>}
 
+          {showReflog && <div id="panel-reflog"><ReflogPanel repoPath={repoPath} onBranchCreated={() => loadRepo()} /></div>}
+          {showExtras && <div id="panel-extras"><RepoExtrasPanel repoPath={repoPath} onOpenRepo={(p) => { setRepoPath(p); loadRepo(p); }} /></div>}
+
           {showStash && (
             <motion.div id="panel-stash" className="analysis-panel" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
               <h3>Stash 列表</h3>
               {stashList.length === 0 && <div className="analysis-item">暂无 stash</div>}
               {stashList.map(s => (
-                <div key={s.index} className="analysis-item">
-                  <span className="hash">stash@{`{${s.index}}`}</span><span className="message">{s.message}</span>
-                  <button className="detail-action-btn" onClick={async () => { try { await invoke('stash_pop', { path: repoPath, index: s.index }); setToast('已弹出 stash'); } catch (e: any) { setError(String(e)); setToast('stash pop 失败'); } loadStashList(); }}>pop</button>
-                  <button className="detail-action-btn" onClick={async () => { if (!confirm(`确定删除 stash@{${s.index}}？该操作不可恢复。`)) return; try { await invoke('stash_drop', { path: repoPath, index: s.index }); setToast('已删除 stash'); } catch (e: any) { setError(String(e)); setToast('stash drop 失败'); } loadStashList(); }}>drop</button>
+                <div key={s.index}>
+                  <div className="analysis-item">
+                    <span className="hash">stash@{`{${s.index}}`}</span><span className="message">{s.message}</span>
+                    <button className="detail-action-btn" onClick={() => toggleStashPreview(s.index)}>{stashPreview?.index === s.index ? '收起' : '预览'}</button>
+                    <button className="detail-action-btn" onClick={async () => { try { await invoke('stash_pop', { path: repoPath, index: s.index }); setToast('已弹出 stash'); } catch (e: any) { setError(String(e)); setToast('stash pop 失败'); } loadStashList(); }}>pop</button>
+                    <button className="detail-action-btn" onClick={async () => { if (!confirm(`确定删除 stash@{${s.index}}？该操作不可恢复。`)) return; try { await invoke('stash_drop', { path: repoPath, index: s.index }); setToast('已删除 stash'); } catch (e: any) { setError(String(e)); setToast('stash drop 失败'); } loadStashList(); }}>drop</button>
+                  </div>
+                  {stashPreview?.index === s.index && (
+                    <div style={{ margin: '8px 0 16px' }}>
+                      {stashPreview.files.length === 0 && <div className="analysis-item" style={{ color: 'var(--text-dim)' }}>这个 stash 没有文件改动</div>}
+                      {stashPreview.files.map(f => (
+                        <div key={`${s.index}-${f.path}`} className="detail-file">
+                          <div className="detail-file-header">
+                            <span className={`file-status file-status-${f.status}`}>{f.status}</span>
+                            <span className="file-path">{f.path}</span>
+                          </div>
+                          {parseAndRenderDiff(f.diff)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
               <button className="btn btn-blue" style={{ marginTop: 10 }} onClick={async () => { await invoke('stash_save', { path: repoPath, message: null }); loadStashList(); }}>保存当前改动</button>
@@ -1034,6 +1086,8 @@ function App() {
         { id: 'heatmap', label: '提交热力图', action: () => openPanel('heatmap', setShowHeatmap) },
         { id: 'knowledge', label: '知识集中度', action: () => openPanel('knowledge', setShowKnowledge) },
         { id: 'stash', label: 'Stash 管理', action: () => loadStashList() },
+        { id: 'reflog', label: 'Reflog 找回', action: () => openPanel('reflog', setShowReflog) },
+        { id: 'extras', label: '子模块 / Worktree', action: () => openPanel('extras', setShowExtras) },
         { id: 'rebase', label: '交互 Rebase', action: () => loadRebaseCommits() },
         { id: 'semantic', label: '语义搜索', action: () => openPanel('semantic', setShowSemanticSearch) },
         { id: 'diffviewer', label: '差异对比', action: () => openPanel('diffviewer', setShowDiffViewer) },
